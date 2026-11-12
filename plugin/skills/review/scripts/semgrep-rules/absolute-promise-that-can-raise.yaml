@@ -1,0 +1,14 @@
+rules:
+  - id: absolute-promise-that-can-raise
+    languages: [python]
+    severity: INFO
+    message: docstring promises it never raises while the body raises; an absolute promise is the first thing a caller relies on and the first thing a reviewer checks
+    patterns:
+      - pattern: |
+          def $F(...):
+              "$DOC"
+              ...
+              raise $E
+      - metavariable-regex:
+          metavariable: $DOC
+          regex: (?is).*(never raises?|does not raise|cannot fail|never fails?|always succeeds?).*

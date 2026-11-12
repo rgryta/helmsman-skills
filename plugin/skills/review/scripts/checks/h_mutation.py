@@ -1,0 +1,170 @@
+import ast
+import re
+import signal
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+import _diff  # noqa: E402
+import _env  # noqa: E402
+
+GUARD = re.compile(
+    r"guard|check|verify|validate|enforce|policy|mask|redact|anonym", re.I
+)
+OPS = {
+    ast.Gt: (">", "<="),
+    ast.Lt: ("<", ">="),
+    ast.GtE: (">=", "<"),
+    ast.LtE: ("<=", ">"),
+    ast.Eq: ("==", "!="),
+    ast.NotEq: ("!=", "=="),
+}
+MAX_MUTANTS = 10
+BUDGET_S = 200  # must stay well under phase0.PER_CHECK_S so a SIGTERM lands between mutants, not mid test-run
+
+
+class _Terminated(Exception):
+    pass
+
+
+def _raise_terminated(signum, frame):
+    raise _Terminated(f"signal {signum} received, restored and exiting")
+
+
+def _install_signal_handlers():
+    try:
+        signal.signal(signal.SIGTERM, _raise_terminated)
+        signal.signal(signal.SIGINT, _raise_terminated)
+    except ValueError:
+        pass
+
+
+def _is_test_path(f):
+    p = Path(f)
+    if p.name.startswith("test_") or p.name.endswith("_test.py"):
+        return True
+    return "tests" in p.parts
+
+
+def _pkg_dir(worktree, path):
+    root = Path(worktree)
+    p = path.parent
+    while True:
+        if (p / "pyproject.toml").exists():
+            return p
+        if p == root or p == p.parent:
+            break
+        p = p.parent
+    return path.parent
+
+
+def _mutants(src):
+    tree = ast.parse(src)
+    lines = src.splitlines(keepends=True)
+    out = []
+    for fn in [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and GUARD.search(n.name)
+    ]:
+        for node in ast.walk(fn):
+            if (
+                isinstance(node, ast.Compare)
+                and len(node.ops) == 1
+                and type(node.ops[0]) in OPS
+                and node.lineno == node.end_lineno
+            ):
+                cur, flipped = OPS[type(node.ops[0])]
+                line = lines[node.lineno - 1]
+                left_end = node.left.end_col_offset
+                right_start = node.comparators[0].col_offset
+                opseg = line[left_end:right_start]
+                if cur not in opseg:
+                    continue
+                new_line = (
+                    line[:left_end]
+                    + opseg.replace(cur, flipped, 1)
+                    + line[right_start:]
+                )
+                out.append((node.lineno, new_line, f"{cur} -> {flipped} in {fn.name}"))
+    return out
+
+
+def _run_pkg_tests(d, worktree, pkg_dir, python=None):
+    for tool in _env.pytest_commands(worktree, pkg_dir, python):
+        code, out = d.run_cmd(
+            [*tool, str(pkg_dir), "-q", "-x"], cwd=worktree, timeout=120
+        )
+        if not _env.runner_unavailable(code, out):
+            return code
+    return -2
+
+
+def run(worktree, base):
+    _install_signal_handlers()
+    files = _diff.changed_py_files(worktree, base)
+    if not files:
+        return "OK: no python changes"
+    prod_files = [f for f in files if not _is_test_path(f)]
+    if not prod_files:
+        return "OK: no production files changed (only test files) - nothing to probe"
+    start = time.monotonic()
+    survived, uncovered, inconclusive, tried = [], [], [], 0
+    python, synced = None, False
+    for f in prod_files:
+        path = Path(worktree, f)
+        orig_bytes = path.read_bytes()
+        src = orig_bytes.decode("utf-8", errors="ignore")
+        try:
+            muts = _mutants(src)
+        except SyntaxError:
+            continue
+        pkg_dir = _pkg_dir(worktree, path)
+        for lineno, new_line, label in muts:
+            if tried >= MAX_MUTANTS or time.monotonic() - start > BUDGET_S:
+                break
+            tried += 1
+            if not synced:
+                python, _, _ = _env.ensure_project_env(worktree)
+                synced = True
+            lines = src.splitlines(keepends=True)
+            lines[lineno - 1] = new_line
+            try:
+                path.write_bytes("".join(lines).encode("utf-8"))
+                code = _run_pkg_tests(_diff, worktree, pkg_dir, python)
+            finally:
+                path.write_bytes(orig_bytes)
+            if code == 0:
+                survived.append(
+                    f"- SURVIVED: {f}:{lineno} ({label}) - tests stay green under this mutant"
+                )
+            elif code == -2:
+                return "SKIPPED: pytest unavailable for mutation probe"
+            elif code == 5:
+                uncovered.append(
+                    f"- UNCOVERED: {f}:{lineno} ({label}) - no tests collected for this guard"
+                )
+            elif code != 1:
+                inconclusive.append(
+                    f"- INCONCLUSIVE: {f}:{lineno} ({label}) - test run exited {code}, mutant not evaluated"
+                )
+    if not tried:
+        return "OK: no guard-like changed functions to probe"
+    if survived or uncovered or inconclusive:
+        return (
+            f"FINDINGS: {len(survived)}/{tried} mutants survived, "
+            f"{len(uncovered)}/{tried} uncovered by any test, "
+            f"{len(inconclusive)}/{tried} inconclusive\n"
+            + "\n".join(survived + uncovered + inconclusive)
+        )
+    return f"OK: all {tried} probed mutants killed by tests"
+
+
+if __name__ == "__main__":
+    try:
+        print(run(sys.argv[1], sys.argv[2]))
+    except Exception as e:
+        print(f"ERROR: {type(e).__name__}: {e}")
+    sys.exit(0)

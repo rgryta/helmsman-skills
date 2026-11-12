@@ -1,0 +1,40 @@
+rules:
+  - id: swallowed-exception
+    languages: [python]
+    severity: INFO
+    # under 120 chars: _render truncates the message and would cut the hatch
+    message: "broad except discards the error with no log or signal; if failing open is deliberate, mark the try: line # nosemgrep"
+    patterns:
+      # bare `except:` is deliberately absent - ruff E722 already reports it and
+      # duplicating it would double-report the same line
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except Exception:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except BaseException:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except Exception:
+                  return None
+          - pattern: |
+              try:
+                  ...
+              except BaseException:
+                  return None
+          - pattern: |
+              try:
+                  ...
+              except Exception:
+                  return
+          - pattern: |
+              try:
+                  ...
+              except Exception:
+                  continue

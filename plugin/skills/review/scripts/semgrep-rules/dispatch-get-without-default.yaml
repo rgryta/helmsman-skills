@@ -1,0 +1,6 @@
+rules:
+  - id: dispatch-get-without-default
+    languages: [python]
+    severity: WARNING
+    message: lookup result invoked without a default or None-guard; an unknown key falls through as a TypeError
+    pattern: $D.get($K)(...)

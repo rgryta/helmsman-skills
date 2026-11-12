@@ -1,0 +1,15 @@
+{
+  "name": "helmsman-skills",
+  "description": "Generic PR review and delivery workflow skills for Claude Code and Codex.",
+  "owner": {
+    "name": "Radosław Gryta",
+    "url": "https://github.com/rgryta"
+  },
+  "plugins": [
+    {
+      "name": "helmsman-skills",
+      "source": "./plugin",
+      "description": "PR review, review-fold, CI triage, PR comment, branch-pruning and transcript-context skills."
+    }
+  ]
+}
