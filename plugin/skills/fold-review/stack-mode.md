@@ -18,11 +18,11 @@ never straddle two waves, so each PR keeps one `await_layers.py` collection.
 
 ## Phase 0 for a stack
 
-Pytest, pyright and mutation share one machine-wide lock, so parallel Phase 0
+Pytest and mutation share one machine-wide lock, so parallel Phase 0
 runs do not go faster: they queue, and a run that waits past its budget skips
 those checks. Launch a stack's Phase 0 runs one at a time, the next once the
 previous returns; a PR's wave can dispatch as soon as its own FACTS exists.
-In a stack fold, per-PR runs add `HELMSMAN_PHASE0_SKIP=b_pyright,c_pytest,h_mutation`
+In a stack fold, per-PR runs add `HELMSMAN_PHASE0_SKIP=c_pytest,h_mutation`
 (facts for the diff review only, no lock taken, so these may run together)
 and the one gate below carries the heavy checks.
 

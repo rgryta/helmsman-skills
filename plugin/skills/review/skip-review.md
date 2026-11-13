@@ -25,7 +25,7 @@ covered. Their coverage only comes back on a round run without
 Skip step 3 (spec review) entirely - go straight to step 4 with the spec as
 written.
 
-Skip step 5's full-tier dispatch (`hunter.md` + `landmine-review`) unless a
+Skip step 5's full-tier dispatch (`hunter.md`, `edge.md` and `landmine-review`) unless a
 touched path matches step 5's sensitive-path list - a fold pushes with no
 approval checkpoint, and an unreviewed push costs most on those paths, so
 they keep the full tier even under this flag. Otherwise

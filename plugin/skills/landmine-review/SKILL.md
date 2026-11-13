@@ -201,7 +201,8 @@ just class 4/8 instances for the HTTP domain, not a separate concern.)
 ## Method
 
 1. Check the PR out (`gh pr checkout <n>` / existing worktree), `gh pr view <n>
-   --json title,body,files`, `gh pr diff <n>`. **Enumerate every changed file**
+   --json title,body,files`, `gh pr diff <n>`. As a dispatched layer, use the
+   worktree and diff scope the CONTEXT file names instead; never check out. **Enumerate every changed file**
    — backend, frontend, migrations, config, tests — and review each in full (the
    landmine is usually in the surrounding code the diff calls into, not the
    hunk). If you skip any file, say which and why: silently reviewing only the

@@ -80,7 +80,10 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    merge-base --is-ancestor <sha> <head>` in the worktree. When it is not,
    `setup_round.py` compares per-commit patch-ids of the old and new head
    against their merge-bases with `origin/<base_ref>`: every patch unchanged
-   -> mode `rebase` (`delta_commits` empty): skip steps 3 and 5, fetch the
+   -> mode `rebase` (`delta_commits` empty): skip step 5 but still run step 3
+   (the new base can break unchanged code: upsert each FAIL section of
+   FACTS as a ledger finding - `ledger.py upsert`, severity Blocker, the
+   failing test's file:line - before writing), fetch the
    author's replies as in step 4, re-locate every ledger finding not `fixed`
    at the new head (re-verify file:line, `upsert` the new line, `set-status
    fixed` where the code is gone), drop findings the author answered, run
@@ -113,7 +116,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    ceiling: that check crashed, so its class went unhunted. Name the crashed
    check in the review and treat the round like a PARTIAL one.
 4. **Context pack.** Write `<outdir>/CONTEXT-<n>.md` ONCE: PR title/body
-   digest, commit list, changed-file map, head SHA, `ledger.py report`
+   digest, commit list, changed-file map, head SHA, the worktree path, the
+   diff range `origin/<base_ref>...<head>` (in delta mode, `delta_commits`), `ledger.py report`
    output, the FACTS file location, and an `Excludes` list (`conventions.md`
    review excludes; omit when empty). In delta and rebase mode also add
    the PR author's replies on earlier review threads (`gh api graphql`
@@ -157,8 +161,9 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
      layers, and say so in the review. `FLAT:` means dispatch it with its
      SKILL.md as instructions; tell it Phase 0 already ran
      ruff/pyright/pytest - judgment only, no tool re-runs.
-   - Layer `landmine`: run `fanout_check.py` on the `landmine-review`
-     skill's SKILL.md the same way, then dispatch its contents as
+   - Layer `landmine`: run `fanout_check.py` on
+     `<skill-dir>/../landmine-review/SKILL.md` (it ships with this plugin) the
+     same way, then dispatch its contents as
      instructions on a `FLAT:` verdict. Every layer whose instructions come
      from a skill file outside this one gets that check, every time.
    - Layer `hunter`: dispatch with `<skill-dir>/hunter.md` as instructions.
@@ -340,9 +345,8 @@ the recommendation line in REVIEW-PR-<n>.md exactly as to a posted verdict.
 - a round recorded PARTIAL, a FACTS file carrying an `ERROR:` section, or a
   gate section (`a_ruff`, `b_pyright`, `c_pytest`) that is neither OK nor
   FINDINGS -> COMMENT, because each leaves the Blocker count unknown rather
-  than zero. Exceptions: the `c_pytest` infra-only skip and a test run CI
-  carries, both in `<skill-dir>/test-gate-exceptions.md`, do not force
-  COMMENT by themselves.
+  than zero. Exception: a test run CI carries
+  (`<skill-dir>/test-gate-exceptions.md`) does not force COMMENT by itself.
 - an open question whose answer would change a severity -> COMMENT until it
   is answered
 - otherwise APPROVE; never REQUEST_CHANGES
