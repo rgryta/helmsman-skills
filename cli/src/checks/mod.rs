@@ -5,12 +5,14 @@ mod d_comment_density;
 mod i_neighborhood;
 mod j_siblings;
 mod k_claims;
+mod l_test_shape;
 
 pub const REGISTRY: &[(&str, Check)] = &[
     ("d_comment_density", d_comment_density::run),
     ("i_neighborhood", i_neighborhood::run),
     ("j_siblings", j_siblings::run),
     ("k_claims", k_claims::run),
+    ("l_test_shape", l_test_shape::run),
 ];
 
 pub fn find(name: &str) -> Option<Check> {

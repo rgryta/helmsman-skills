@@ -82,12 +82,15 @@ pub fn read_text(path: &Path) -> std::io::Result<String> {
     Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
+/// CPython's tokenizer `MAXLEVEL`: one more open bracket is "too many nested parentheses".
+const MAX_NESTING: usize = 200;
+
 /// The 1-based lines `tokenize.generate_tokens` reports a COMMENT token on, or None where it raises.
 ///
 /// Runs ruff's raw lexer, since its parser re-lexes around unclosed brackets and CPython never does.
 /// The lexer recovers from errors CPython's tokenizer raises on and flags some it accepts, so the
 /// raising cases are decided here: unterminated strings and brackets, a bad line continuation,
-/// malformed numbers, NUL, non-printable characters, and inconsistent indentation.
+/// malformed numbers, NUL, non-printable characters, too deep nesting, and inconsistent indentation.
 pub fn comment_lines(text: &str) -> Option<BTreeSet<usize>> {
     if text.contains('\0') {
         return None;
@@ -110,6 +113,9 @@ pub fn comment_lines(text: &str) -> Option<BTreeSet<usize>> {
             TokenKind::EndOfFile => break,
             TokenKind::Comment => {
                 comments.insert(line_starts.partition_point(|&s| s <= start));
+            }
+            TokenKind::Lpar | TokenKind::Lsqb | TokenKind::Lbrace if depth >= MAX_NESTING => {
+                return None
             }
             TokenKind::Lpar | TokenKind::Lsqb | TokenKind::Lbrace => depth += 1,
             TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace => {
