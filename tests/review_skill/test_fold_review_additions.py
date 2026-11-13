@@ -123,3 +123,45 @@ def test_fold_review_spec_records_the_thread_and_a_three_way_disposition():
         "fixed in this PR (and how), fixed in a different PR or commit (and which), "
         "or explicitly rejected (and why)" in block
     )
+
+
+def test_fold_review_never_writes_into_the_installed_skill_copy():
+    """Candidate rules land outside the plugin install, and the probe file is not a fixed /tmp path."""
+    block = _flat()
+    assert "semgrep-candidates/<kebab-id>.yaml" in block
+    assert "/tmp/prefix-probe.py" not in block
+    assert 'probe="$(mktemp -d)/prefix-probe.<ext>"' in block
+
+
+def test_fold_review_paginates_and_skips_folded_review_bodies():
+    """No fixed page size truncates feedback, and a folded review body is never re-folded."""
+    block = _flat()
+    assert "first: 10)" not in block and "first: 50" not in block
+    assert "Paginate `reviewThreads` and `reviews`" in block
+    assert block.count("folded-reviews.txt") >= 2
+
+
+def test_fold_review_file_input_wins_over_live_threads():
+    """A local file is the findings source; live state only adds IDs and newer feedback."""
+    block = _flat()
+    assert "The file wins" in block
+    assert "no exceptions" not in block
+    assert "Layer 1" not in block and "Layer 3" not in block
+
+
+def test_fold_review_ledgers_every_disposed_review_body():
+    """Rejected review bodies are recorded too, so a later fold never re-folds them."""
+    block = _flat()
+    assert (
+        "every review body the spec gave a disposition, whatever the disposition"
+        in block
+    )
+
+
+def test_fold_review_file_input_keeps_live_filters_and_reports_drops():
+    """Live additions to a file fold obey the same filters, and mtime drops are reported."""
+    block = _flat()
+    assert "kept by the same `isResolved` and `folded-reviews.txt` filters" in block
+    assert "first comment's `createdAt`" in block
+    assert "step 1 dropped for predating the review file" in block
+    assert "in its own follow-up query" in block

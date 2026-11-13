@@ -47,16 +47,23 @@ of the body, which "close out this PR" does not grant.
 
 ### 1. Resolve input
 
-**Live GitHub review state is always checked, for every PR in scope, no
-exceptions.** This holds no matter how the target was specified - a single
-PR number, a link, a local file path, or a multi-PR ask like "all four" -
-and no matter whether a local `REVIEW-PR-<n>.md` already exists or already
-reads as fully folded in. A local file can be stale the moment a human (or
-another bot) posts a new review after it was written; its presence, or its
-"Fixed:" annotations, are never grounds to skip the GraphQL check below.
-When given several PRs at once, resolve each one through this step
-independently - do not batch-scan local files first and treat that as the
-resolution.
+**Live GitHub review state is always fetched, for every PR in scope.** This
+holds no matter how the target was specified - a single PR number, a link, a
+local file path, or a multi-PR ask like "all four" - and no matter whether a
+local `REVIEW-PR-<n>.md` already exists or already reads as fully folded in.
+A local file can be stale the moment a human (or another bot) posts a new
+review after it was written; its presence, or its "Fixed:" annotations, are
+never grounds to skip the GraphQL query below. What the fetched state
+contributes depends on the input: for a PR number/link it is the review
+content; for a file path the file is the review content and the live state
+only adds to it (see that branch). When given several PRs at once, resolve
+each one through this step independently - do not batch-scan local files
+first and treat that as the resolution.
+
+**Project root** is the directory holding the repo's local checkout (its
+parent, one directory per repo), not the repo's own root. `review` writes
+`REVIEW-PR-<n>.md` there and creates its worktrees beside the checkout as
+`<repo>-worktrees/`.
 
 - **File path that exists** - read it as the review content, but still
   resolve `<n>`, owner/repo, and the PR's head branch before continuing -
@@ -65,13 +72,24 @@ resolution.
   guess a repo: derive `<n>` from the filename if it's shaped like
   `REVIEW-PR-<n>.md`; otherwise derive `<n>` and the PR from the containing
   checkout's current branch (`gh pr view --json number,url,headRefName,baseRefName`); if
-  that also fails, ask the user. Only then continue to step 2.
+  that also fails, ask the user. Then run the live GraphQL query below
+  anyway. The file wins: a caller such as a stack triage may have
+  reattributed, merged, or dropped findings in it on purpose, so never
+  re-add a live thread or review body that predates the file's
+  modification time (a thread's time is its first comment's `createdAt`, a
+  body's is its `submittedAt`). Live state contributes two things only:
+  thread IDs for findings the file already holds (step 7 resolves or
+  replies on them), and threads or review bodies submitted after the file
+  was written, which are new feedback and get added, kept by the same
+  `isResolved` and `folded-reviews.txt` filters as the PR-number branch
+  below. List every unresolved thread or unfolded review body this rule
+  dropped for predating the file, so step 8 can report it. Only then
+  continue to step 2.
 - **PR number/link** - resolve owner/repo the same way `review` step 1 does:
   from a full PR URL directly, or for a bare number from the current
   checkout's `git remote get-url origin` (or ask the user if ambiguous).
-  Map to the local checkout the same way `review` does (project root - the
-  parent directory holding one directory per repo, not the repo's own root;
-  see `review`'s step 1).
+  The local checkout is the repo's directory under the project root
+  (defined above).
   - Primary source is the PR's own reviews on GitHub - this is the live,
     canonical record of open feedback, whether it's a human reviewer,
     another bot, or `review --post` output. A review can carry feedback two
@@ -83,24 +101,35 @@ resolution.
       pullRequest(number: N) {
         reviewThreads(first: 100) { nodes {
           id isResolved path line
-          comments(first: 10) { nodes { body author { login } } } }
+          comments(first: 100) { nodes { body author { login } createdAt }
+            pageInfo { endCursor hasNextPage } } }
           pageInfo { endCursor hasNextPage } }
-        reviews(first: 50, states: [CHANGES_REQUESTED, COMMENTED]) { nodes {
-          state body author { login } submittedAt } } } } }'
+        reviews(first: 100, states: [CHANGES_REQUESTED, COMMENTED]) { nodes {
+          id state body author { login } submittedAt }
+          pageInfo { endCursor hasNextPage } } } } }'
     ```
-    Paginate `reviewThreads` with `after: <endCursor>` while `hasNextPage`.
+    Paginate `reviewThreads` and `reviews` with `after: <endCursor>` while
+    their `hasNextPage`, paging each connection in its own follow-up query
+    that drops the other (re-running both would re-fetch the other's page
+    1 and double-count it), and any thread whose `comments.pageInfo.hasNextPage`
+    is true with `node(id: "<thread id>") { ... on PullRequestReviewThread {
+    comments(first: 100, after: "<endCursor>") { ... } } }` - a truncated
+    page drops feedback silently.
     Keep only `isResolved: false` threads - already-resolved threads were
     presumably already addressed or deliberately dismissed; re-litigating
     them isn't this skill's job. From `reviews`, keep nodes with a non-empty
     `body` (a bare approval or state change with no body carries no
-    feedback to fold). If either set is non-empty, that combined content is
-    the review content, go to step 2. Record each kept thread's `id` - step
+    feedback to fold) whose `id` is not listed in
+    `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/folded-reviews.txt` -
+    a review body cannot be resolved like a thread, so without that list
+    every later fold would re-fold the same old summary. If either set is
+    non-empty, that combined content is the review content, go to step 2. Record each kept thread's `id` - step
     7 needs it to resolve the thread once the fix lands, or to reply on it
     when the fix lands elsewhere (top-level reviews have no thread either
     way, so nothing to record there).
   - Nothing in either set (empty PR, or review never posted to GitHub) -
     fall back to a local review file: look for `REVIEW-PR-<n>.md` at the
-    project root first (that's where `review` actually writes it), then at
+    project root first, then at
     the repo's own root for a manually-relocated file. Found - use it as
     the review content, go to step 2. Not found either - report that no
     review content exists for this PR and stop.
@@ -267,8 +296,8 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   foreground, `run_in_background` unset, never named/backgrounded:
   - `../review/hunter.md` as `Agent` instructions on the same balanced model
     at medium effort resolved in step 3.
-  - `landmine-review`, discovered the same way `review`'s Layer 3 discovers
-    it (an external skill - don't hardcode its path here), then `python3
+  - `landmine-review`, discovered the same way `review`'s step 5 Layer
+    `landmine` discovers it (an external skill - don't hardcode its path here), then `python3
     ../review/scripts/fanout_check.py <resolved-path>/SKILL.md`. A
     `FANOUT:` verdict means run its steps directly instead of wrapping it
     in an `Agent`; on `FLAT:`, dispatch its contents as `Agent`
@@ -329,9 +358,9 @@ that excludes one package while another stays in scope is respected
 automatically, since the check runs the repo's own configured tool rather
 than a hand-maintained exception list). If step 5 fell back to "Phase 0
 unavailable" (script missing or produced nothing), discover the repo's own
-gate commands manually the same way `review` Layer 1 discovers a project
-review skill: check the repo's own `CLAUDE.md`/`AGENTS.md`/`README`, CI
-config, and Makefile/package-manager scripts for the actual lint/typecheck/
+gate commands manually, in the same places `review`'s step 5 Layer
+`project` looks for a repo's own review skill: check the repo's own
+`CLAUDE.md`/`AGENTS.md`/`README`, CI config, and Makefile/package-manager scripts for the actual lint/typecheck/
 test commands - never assume another repo's toolchain. If none are
 discoverable even then, report that explicitly and proceed - blocking on an
 undiscoverable gate would stall this autonomous flow with no data to act on.
@@ -355,13 +384,20 @@ because resolving a thread asserts that the diff addressed it:
   ```
   gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:"<id>"}) { thread { isResolved } } }'
   ```
-  A top-level review body has no thread to resolve - there's nothing to call
-  here for it; its findings are closed out by the pushed fix and the step 8
-  report alone.
+  A top-level review body has no thread to resolve; its findings are closed
+  out by the pushed fix and the step 8 report.
 - **Fixed in a different PR or commit, or explicitly rejected** - never
   resolve it, reply on the thread instead (below). A fix that lives somewhere
   else is not in this diff, so resolving would tell the next reader the
   opposite of what happened.
+
+After the push succeeds, append the `id` of every review body the spec gave
+a disposition, whatever the disposition, to
+`~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/folded-reviews.txt`
+(one per line, `mkdir -p` first) - that file is what step 1 skips on the
+next fold, and a body has no thread to carry a rejection, so a rejected one
+left out would be re-folded and possibly implemented next time. It lives
+beside `<outdir>`, not inside it, so cleanup keeps it.
 
 **Thread IDs when step 1 fell back to a local file.** If the review content
 came from a local `REVIEW-PR-<n>.md` that had also been posted to GitHub via
@@ -432,7 +468,9 @@ which spec findings were fixed in this diff, fixed in a different PR or
 commit (naming which), or explicitly rejected (with reasons), the PR URL, the
 resolved-thread count (plus any that failed to resolve), and for every thread
 this diff did not fix either the URL of the reply posted on it or why none
-was (body declined, no thread behind that finding, or the post failed).
+was (body declined, no thread behind that finding, or the post failed),
+and every unresolved thread or review body step 1 dropped for predating the
+review file.
 
 ## Error handling
 
@@ -484,12 +522,16 @@ was (body declined, no thread behind that finding, or the post failed).
    lands, because the ledger tracks whether a finding is closed and not
    whether someone means to close it.
 2. For every CONFIRMED BLOCKER folded in, decide whether the bug class is
-   mechanically expressible. If yes, write a candidate rule
-   `../review/scripts/semgrep-rules/<kebab-id>.yaml` (same shape as the
-   seed rules). Validate it fires on the PRE-FIX code: extract that version
-   with `git show <pre-fix-sha>:<path> > /tmp/prefix-probe.py` and run
-   `semgrep --config <the-new-file> /tmp/prefix-probe.py` (or `uvx
-   semgrep`). A rule that cannot be made to fire on the actual bug is not
-   worth keeping - drop it rather than committing a dead rule. Committing
-   the candidate rule to the repository that ships these skills is a
-   separate follow-up PR, never part of the fold itself.
+   mechanically expressible. If yes, write a candidate rule to
+   `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/semgrep-candidates/<kebab-id>.yaml`
+   (`<outdir>`'s parent, which step 7's cleanup keeps), using the seed
+   rules in `../review/scripts/semgrep-rules/` as the shape. Never write
+   into that seed directory: it is the installed skill copy, which a
+   plugin update replaces. Validate the rule fires on the PRE-FIX code:
+   `probe="$(mktemp -d)/prefix-probe.<ext>"` with `<ext>` the extension of
+   the file under test (semgrep picks the language from it), `git show
+   <pre-fix-sha>:<path> > "$probe"`, then `semgrep --config <the-new-file>
+   "$probe"` (or `uvx semgrep`). A rule that cannot be made to fire on the
+   actual bug is not worth keeping - delete it. A rule that fires belongs
+   in a separate follow-up PR to the repository that ships these skills,
+   never in the fold itself.
