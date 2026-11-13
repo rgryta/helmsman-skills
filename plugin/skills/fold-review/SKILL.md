@@ -60,10 +60,9 @@ only adds to it (see that branch). When given several PRs at once, resolve
 each one through this step independently - do not batch-scan local files
 first and treat that as the resolution.
 
-**Project root** is the directory holding the repo's local checkout (its
-parent, one directory per repo), not the repo's own root. `review` writes
-`REVIEW-PR-<n>.md` there and creates its worktrees beside the checkout as
-`<repo>-worktrees/`.
+**Project root** and worktree locations follow `../review/conventions.md`
+(defaults, overridable by the project's agent docs); `review` writes
+`REVIEW-PR-<n>.md` at the project root.
 
 - **File path that exists** - read it as the review content, but still
   resolve `<n>`, owner/repo, and the PR's head branch before continuing -
@@ -136,8 +135,8 @@ parent, one directory per repo), not the repo's own root. `review` writes
 
 ### 2. Spec the fixes
 
-Write `FOLD-PR-<n>-spec.md` at the project root (same location convention as
-`REVIEW-PR-<n>.md` - the parent directory holding one directory per repo).
+Write `FOLD-PR-<n>-spec.md` at the project root (same location as
+`REVIEW-PR-<n>.md`).
 For every finding in the review content: record the thread ID captured in
 step 1, and give it exactly one of three dispositions - fixed in this PR (and
 how), fixed in a different PR or commit (and which), or explicitly rejected
@@ -165,24 +164,14 @@ above) - this step is skipped entirely. Under `--inline`, follow
 `inline-mode.md` (already read per Flags above) for how this dispatch runs.
 
 Dispatch `../review/hunter.md` and `../review/edge.md` (relative to this
-skill's base dir) as two `Agent` calls in ONE message, each on a balanced
-coding/reasoning model at medium effort, collected the way `review`'s step 5
-and 6 collect layers: the calls return at once, so keep each task id, never
+skill's base dir) as two `Agent` calls in ONE message, on the model in
+`../review/model-choice.md`, collected the way `review`'s step 5 and 6
+collect layers: the calls return at once, so keep each task id, never
 address an agent by name or collect it via SendMessage, and read results only
-from disk. Resolve
-the override from the active CLI: for example, Claude Code `model: sonnet`;
-Codex `model: gpt-5.6-terra` with `reasoning_effort: medium`; or another CLI's
-current comparable balanced model, such as its Gemini Pro-tier model. Prefer
-the CLI's current stable alias, do not substitute an economy tier such as
-Haiku, Luna, Flash, or Mini, and inherit the session model with the fallback
-recorded when per-subagent overrides are unavailable. These are the same
-prompts `review`'s `hunter` layer (blind reader + acceptance auditor) and
-`edge` layer (boundaries and input shapes) use, replacing the retired
-`bmad-code-review` wrapper: `review` dropped it after an audit found it
-produced zero findings at 28% of the trio's cost, and that wrapping a
-fan-out skill in an `Agent` breaks completion routing. Both are flat
-prompt files, not discoverable skills, so no fan-out check is needed for
-them specifically here (unlike `landmine-review` in step 5).
+from disk. These are the same prompts `review`'s `hunter` layer (blind
+reader + acceptance auditor) and `edge` layer (boundaries and input shapes)
+use. Both are flat prompt files, not discoverable skills, so no fan-out check
+is needed for them (unlike `landmine-review` in step 5).
 
 There is no diff yet at this point - this review runs pre-implementation,
 same as today. Create `<outdir>` (defined in step 4; `mkdir -p` there is then
@@ -250,28 +239,13 @@ Skipped entirely if step 4 produced zero new local commits since
 report already covers rejected findings with reasons.
 
 **Facts first, unconditionally, and only after step 4's commits exist.**
-Phase 0 repairs a worktree a check dirtied by running `git restore` on
-it, which is unrecoverable. It spares what was already modified when it
-started, but anything that becomes dirty WHILE it runs is reverted, and an
-uncommitted fold has been lost this way. Commit before you launch it. Launch
-it with `HELMSMAN_PYTEST_SCOPE=gate HELMSMAN_PHASE0_CHECK_S=270` in the
-environment, plus `HELMSMAN_PYTEST_RUNNER` when the project names its own
-test runner (see the review skill's Phase 0): a review reads `c_pytest` as
-facts and can live with the tests named for the diff, but this is a gate before a push with no CI answer yet,
-so it runs every test directory holding one of those tests and gets a budget
-a real suite can finish inside. Run `python3 ../review/scripts/run_phase0.py
-<worktree> <outdir>/FACTS-<n>.md --base origin/<baseRefName>` (the PR's
-`baseRefName`; path relative to this skill's base dir) in a
-managed background Bash tool call and retain its task or session handle. The
-tool call owns the process: never append `&`, `nohup` or `disown`. In Claude
-use a background Bash task; in Codex let the exec call yield a session ID
-without detaching the command inside the shell. Collect that exact tool call
-to completion with a foreground wait bounded at 600000 ms; do not poll only
-for the facts file because a dead process can never satisfy that wait. A
-non-zero/terminated tool call or a completed call with no facts file is Phase
-0 unavailable: preserve its captured exit/signal and stderr in the one-line
-`<outdir>/FACTS-<n>.md` fallback if `run_phase0.py` could not write it. Layers
-must see an explicit confidence ceiling, never a missing file. This single
+Launch `python3 ../review/scripts/run_phase0.py` (relative to this skill's
+base dir) per `../review/phase0-launch.md` (commit first, test runner, managed background
+launch, bounded collect, fallback FACTS file; a failure there is "Phase 0
+unavailable"), with `HELMSMAN_PYTEST_SCOPE=gate
+HELMSMAN_PHASE0_CHECK_S=270` added to the environment: this is a gate before
+a push with no CI answer yet, so it runs every test directory holding one of
+the diff's tests, with a budget a real suite can finish inside. This single
 execution also serves step 6 (Gates)
 below - its `a_ruff`/`b_pyright`/`c_pytest` checks ARE the gates; nothing
 runs lint/typecheck/test twice.
@@ -355,14 +329,10 @@ blocking the fold entirely on tooling it doesn't own.
 `a_ruff`/`b_pyright`/`c_pytest` sections failing is a gate failure, and so is
 any of the three coming back as anything other than OK or FINDINGS - a check
 that crashed, timed out or skipped ran no gate at all, and no verdict is not
-a pass. Exception: `c_pytest` SKIPPED where every non-OK package's reason is
-`test runner infra unavailable` (no `FAIL`, no other skip reason mixed in) is
-not a gate failure, provided the repo carries a CI config that runs its tests
-(e.g. `.github/workflows/`) - that is the local test runner (podman/docker)
-unreachable, a local-infra problem CI does not share, not evidence about the
-fold. Note it in step 8 and continue past the gate. With no CI config nothing
-else ever runs those tests before merge, so the skip stays a gate failure. Say which check gave no
-verdict and why rather than pushing on it. One
+a pass. Exception: the `c_pytest` infra-only skip in
+`../review/test-gate-exceptions.md` is not a gate failure; note it in step 8
+and continue. Otherwise say which check gave no verdict and why rather than
+pushing on it. One
 fix-and-rerun cycle over the full gate set on failure, not a separate retry
 per individual failing check - still failing, stop, report the failing gate
 output, leave the worktree in place for inspection, do not push. `phase0.py`
@@ -435,9 +405,8 @@ reason:
 - fixed elsewhere: which PR or commit carries the fix, since this diff won't
   show it
 
-Bodies follow `pr-comments`' voice contract (no em-dash, no emoji, never
-blame a ticket or an author); use a style-rewrite tool when the environment
-provides one. A finding with no thread behind it - a top-level review body, or a
+Bodies follow the reply voice in `../review/conventions.md`; use a
+style-rewrite tool when the environment provides one. A finding with no thread behind it - a top-level review body, or a
 local review file that was never posted to GitHub - has nothing to reply to,
 and its reasoning reaches the reader through step 8's report only.
 

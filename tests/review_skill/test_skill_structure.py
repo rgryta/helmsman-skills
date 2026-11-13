@@ -7,6 +7,10 @@ from .test_phase0 import load
 SKILL = SCRIPTS.parent / "SKILL.md"
 HUNTER = SCRIPTS.parent / "hunter.md"
 EDGE = SCRIPTS.parent / "edge.md"
+PHASE0_LAUNCH = SCRIPTS.parent / "phase0-launch.md"
+MODEL_CHOICE = SCRIPTS.parent / "model-choice.md"
+GATE_EXCEPTIONS = SCRIPTS.parent / "test-gate-exceptions.md"
+CONVENTIONS = SCRIPTS.parent / "conventions.md"
 
 
 def test_skill_references_resolve():
@@ -42,7 +46,7 @@ def test_skill_encodes_contracts():
         "NO_OUTDIR",
     ):
         assert token in text, token
-    assert "bmad-code-review" not in text.split("## History")[0]
+    assert "bmad-code-review" not in text
 
 
 def step6():
@@ -51,27 +55,32 @@ def step6():
 
 def test_skill_bounds_the_layer_wait():
     """The layer wait must be a bounded foreground call, never an open-ended or self-scheduled one."""
-    text = SKILL.read_text()
-    body = text.split("## History")[0]
+    body = SKILL.read_text()
     assert "timeout: 600000" in body
     assert "never schedule a wakeup" in body
     assert "ScheduleWakeup" not in body
 
 
 def test_phase0_uses_a_managed_process_lifecycle():
+    """Both Phase 0 launch sites defer to one shared managed-process procedure."""
     fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
     blocks = (
         SKILL.read_text().split("3. **Phase 0")[1].split("4. **Context pack")[0],
         fold.split("**Facts first, unconditionally")[1].split("**Sizing")[0],
     )
     for text in blocks:
-        block = _flat(text)
-        assert "run_phase0.py" in block
-        assert "managed background Bash tool call" in block
-        assert "retain its task or session handle" in block
-        assert "never append `&`, `nohup` or `disown`" in block
-        assert "do not poll only for the facts file" in block.lower()
-        assert "exit/signal and stderr" in block
+        assert "phase0-launch.md" in text
+        assert "run_phase0.py" in text
+    assert "relative to this skill's base dir" in _flat(blocks[1])
+    block = _flat(PHASE0_LAUNCH.read_text())
+    assert "run_phase0.py" in block
+    assert "<review-skill-dir>" not in block
+    assert "managed background Bash tool call" in block
+    assert "retain its task or session handle" in block
+    assert "never append `&`, `nohup` or `disown`" in block
+    assert "do not poll only for the facts file" in block.lower()
+    assert "exit/signal and stderr" in block
+    assert "HELMSMAN_PYTEST_RUNNER" in block
 
 
 def test_plugin_manifests_ship_the_same_version():
@@ -107,7 +116,7 @@ def test_every_wait_including_the_retry_runs_through_the_script():
 
 def test_every_external_layer_skill_is_fanout_checked():
     """Both externally-sourced layers route through fanout_check rather than a prose assertion."""
-    body = SKILL.read_text().split("## History")[0]
+    body = SKILL.read_text()
     project_block = body.split("- Layer `project`:")[1].split("- Layer `landmine`:")[0]
     landmine_block = body.split("- Layer `landmine`:")[1].split("- Layer `hunter`:")[0]
     assert "fanout_check.py" in project_block
@@ -366,8 +375,7 @@ def test_the_local_recommendation_obeys_the_same_verdict_rule():
     """A review file read by a human is where the demotion actually lands."""
     text = _flat(verdict())
     assert "REVIEW-PR-<n>.md" in text
-    body = SKILL.read_text().split("## History")[0]
-    assert "recommendation (per `## Verdict`)" in body
+    assert "recommendation (per `## Verdict`)" in SKILL.read_text()
 
 
 def test_post_mode_defers_to_the_shared_verdict_rule():
@@ -390,21 +398,23 @@ def test_hunter_findings_name_the_consumer_behind_the_severity():
 
 def test_balanced_layer_model_is_resolved_for_the_active_cli():
     """The cheaper layer tier stays portable without falling back to economy models."""
-    body = SKILL.read_text().split("## History")[0]
-    model_block = body.split("**Model and effort per layer**")[1].split(
-        "- Layer `project`:"
-    )[0]
-    assert "Claude Code `model: sonnet`" in model_block
-    assert "Codex `model: gpt-5.6-terra`" in model_block
-    assert "`reasoning_effort: medium`" in model_block
-    assert "Gemini Pro-tier" in model_block
-    assert "Haiku, Luna, Flash, or Mini" in model_block
+    model_block = (
+        SKILL.read_text()
+        .split("**Model and effort per layer**")[1]
+        .split("- Layer `project`:")[0]
+    )
+    assert "model-choice.md" in model_block
+    text = _flat(MODEL_CHOICE.read_text())
+    assert "balanced coding/reasoning model at medium effort" in text
+    assert "Never substitute an economy tier" in text
+    assert "inherit the session model and record that fallback" in text
 
 
 def test_edge_is_dispatched_as_its_own_balanced_layer():
     """The split buys a brief, not a tier: edge shares hunter's balanced model."""
-    body = SKILL.read_text().split("## History")[0]
-    block = _flat(body.split("- Layer `edge`:")[1].split("NEVER wrap a skill")[0])
+    block = _flat(
+        SKILL.read_text().split("- Layer `edge`:")[1].split("NEVER wrap a skill")[0]
+    )
     assert "edge.md" in block
     assert "same balanced model at medium effort" in block
     assert "m_bounds" in block
@@ -413,11 +423,41 @@ def test_edge_is_dispatched_as_its_own_balanced_layer():
 def test_related_workflows_resolve_the_same_portable_model_tier():
     for skill_name in ("fold-review", "feature-pipeline"):
         text = (SCRIPTS.parent.parent / skill_name / "SKILL.md").read_text()
-        assert "Claude Code `model: sonnet`" in text
-        assert "Codex `model: gpt-5.6-terra`" in text
-        assert "`reasoning_effort: medium`" in text
-        assert "Gemini Pro-tier" in text
-        assert "Haiku, Luna, Flash, or Mini" in text
+        assert "../review/model-choice.md" in text, skill_name
+        assert "gpt-" not in text and "Gemini" not in text, skill_name
+
+
+def test_c_pytest_infra_exception_lives_in_one_place():
+    """Verdict and fold gate share one carve-out, which still requires a CI config."""
+    fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
+    for text in (verdict(), fold):
+        assert "test-gate-exceptions.md" in text
+        assert "`test runner infra unavailable`" not in text
+    block = _flat(GATE_EXCEPTIONS.read_text())
+    assert "`test runner infra unavailable`" in block
+    assert "CI config" in block
+
+
+def test_author_conventions_are_labelled_defaults():
+    """Layout and voice conventions are read from the project's agent docs first."""
+    block = _flat(CONVENTIONS.read_text())
+    assert "AGENTS.md" in block and "CLAUDE.md" in block
+    for token in (
+        "Project root",
+        "worktrees",
+        "10 lines",
+        "pr-comments",
+        "phase0-launch.md",
+    ):
+        assert token in block, token
+    assert "25 words" not in block
+    assert (
+        "25 words" in (SCRIPTS.parent.parent / "pr-comments" / "SKILL.md").read_text()
+    )
+    assert "HELMSMAN_COMMENT_DENSITY_CAP" in _flat(PHASE0_LAUNCH.read_text())
+    for skill_name in ("review", "fold-review", "feature-pipeline"):
+        text = (SCRIPTS.parent.parent / skill_name / "SKILL.md").read_text()
+        assert "conventions.md" in text, skill_name
 
 
 def test_edge_writes_its_findings_outside_the_repo():
@@ -442,12 +482,10 @@ def test_bound_facts_must_be_accounted_for():
 
 
 def test_both_skills_warn_before_launching_phase0_on_uncommitted_work():
-    """Agents have lost folds to the repair; the warning sits at the launch site."""
-    fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
-    for text in (SKILL.read_text().split("4. **Context pack")[0], fold):
-        flat = _flat(text)
-        assert "git restore" in flat and "unrecoverable" in flat
-        assert "COMMIT FIRST" in flat or "Commit before you launch it" in flat
+    """Agents have lost folds to the repair; the shared launch procedure leads with the warning."""
+    flat = _flat(PHASE0_LAUNCH.read_text())
+    assert "git restore" in flat and "unrecoverable" in flat
+    assert flat.index("Commit first") < flat.index("run_phase0.py")
 
 
 def test_spec_reviews_dispatch_edge_alongside_hunter():

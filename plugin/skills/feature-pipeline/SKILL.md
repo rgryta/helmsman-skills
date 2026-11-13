@@ -100,8 +100,8 @@ PR, ship one PR — do not manufacture a chain.
   (dormant, default-off), then each consumer. A foundation PR that registers
   nothing and changes no runtime path is a valid standalone unit — and if two
   units have no code dependency, they target main independently (no chain).
-- Write specs to **project root** (the parent directory holding the repo
-  checkout) as `<feature>-NN-<name>-spec.md`. NEVER put specs in a repo subtree.
+- Write specs to **project root** (see `../review/conventions.md`) as
+  `<feature>-NN-<name>-spec.md`. NEVER put specs in a repo subtree.
 - Bake the decisive constraints from Phase 0 into every spec (e.g. "this auth
   path needs IAM, not the bearer token").
 
@@ -109,13 +109,7 @@ PR, ship one PR — do not manufacture a chain.
 Review the SPECS before any code. For each spec, dispatch `../review/hunter.md`
 and `../review/edge.md` (relative to this skill's base dir - `review` and
 `feature-pipeline` are sibling plugin skills) as two `Agent` calls,
-each on a balanced coding/reasoning model at medium effort. Resolve the override from the active
-CLI: for example, Claude Code `model: sonnet`; Codex `model: gpt-5.6-terra`
-with `reasoning_effort: medium`; or another CLI's current comparable balanced
-model, such as its Gemini Pro-tier model. Prefer the CLI's current stable
-alias, do not substitute an economy tier such as Haiku, Luna, Flash, or Mini,
-and inherit the session model with the fallback recorded when per-subagent
-overrides are unavailable. These are the same `hunter` and `edge` prompts
+on the model in `../review/model-choice.md`. These are the same `hunter` and `edge` prompts
 `review` and `fold-review` already use, and they are collected the same way:
 the calls return at once, so keep each task id, never address an agent by
 name or collect it via SendMessage relays (idle notifications have stalled
@@ -156,7 +150,8 @@ rewrite later.
 
 ## Phase 3 — Implement: one worktree + draft PR per spec
 One worktree + one draft PR per spec. Branch off `origin/main`.
-- **Worktrees** under `<repo>-worktrees/<branch>`; never work in the main checkout.
+- **Worktrees** per `../review/conventions.md` (default `<repo>-worktrees/<branch>`);
+  never work in the main checkout.
 - **Independent by default:** each PR targets `main` directly. Most logical-split
   units (different service, different package, unrelated concern) have no code
   dependency — do NOT stack them.
@@ -190,8 +185,8 @@ One worktree + one draft PR per spec. Branch off `origin/main`.
     fall back to a manual read-through confirming the assertion would fail
     without the fix, and say so explicitly in the gate report rather than
     skipping the proof silently.
-- PR descriptions ≤10 lines, professional, no emojis, no coauthoring. State
-  clearly what's deferred.
+- PR descriptions follow `../review/conventions.md` (default: ≤10 lines,
+  professional, no emojis, no coauthoring). State clearly what's deferred.
 
 ## Phase 4 — review + fold-in
 Run `/helmsman-skills:review <pr numbers>` (the target repo's own project review
