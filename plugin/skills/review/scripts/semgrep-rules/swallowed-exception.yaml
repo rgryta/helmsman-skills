@@ -11,30 +11,43 @@ rules:
           - pattern: |
               try:
                   ...
-              except Exception:
+              except $EXC:
                   pass
           - pattern: |
               try:
                   ...
-              except BaseException:
+              except $EXC as $E:
                   pass
           - pattern: |
               try:
                   ...
-              except Exception:
+              except $EXC:
                   return None
           - pattern: |
               try:
                   ...
-              except BaseException:
+              except $EXC as $E:
                   return None
           - pattern: |
               try:
                   ...
-              except Exception:
+              except $EXC:
                   return
           - pattern: |
               try:
                   ...
-              except Exception:
+              except $EXC as $E:
+                  return
+          - pattern: |
+              try:
+                  ...
+              except $EXC:
                   continue
+          - pattern: |
+              try:
+                  ...
+              except $EXC as $E:
+                  continue
+      - metavariable-regex:
+          metavariable: $EXC
+          regex: ^(Exception|BaseException)$

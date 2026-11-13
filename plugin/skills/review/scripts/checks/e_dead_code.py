@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import _diff  # noqa: E402
 
 _VULTURE_LINE = re.compile(
-    r"^(?P<path>\S+):(?P<line>\d+): (?P<kind>unused \S+) '(?P<name>[^']+)' \(\d+% confidence\)$"
+    r"^(?P<path>.+?):(?P<line>\d+): (?P<kind>unused \S+) '(?P<name>[^']+)' \(\d+% confidence\)$"
 )
 _SCOPE_NOTE = "scope: changed files only, unused imports excluded (see a_ruff F401), orphans elsewhere not visible"
 

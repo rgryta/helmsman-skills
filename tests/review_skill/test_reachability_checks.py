@@ -139,6 +139,13 @@ def test_dead_code_check_reports_status(fixture_repo):
     assert out.startswith(("OK:", "FINDINGS:", "SKIPPED:"))
 
 
+def test_dead_code_line_parser_accepts_paths_with_spaces():
+    m = load("e_dead_code", "checks/e_dead_code.py")._VULTURE_LINE.match(
+        "my dir/mod.py:4: unused function 'f' (60% confidence)"
+    )
+    assert m and m.group("path") == "my dir/mod.py" and m.group("line") == "4"
+
+
 def test_dead_code_broken_tool_output_skips_not_findings(
     fixture_repo, tmp_path, monkeypatch
 ):
