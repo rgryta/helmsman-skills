@@ -70,7 +70,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    manual fallback, or to force full mode (external API shapes changed)
    with a second `round-start --mode full`. Every `ledger.py` call requires
    `--repo <owner/repo> --pr <n>` (argparse enforces them on every subcommand); later calls below
-   omit them for brevity. `python3 <skill-dir>/scripts/ledger.py delta
+   omit them for brevity. Pass flags literally, never through a shell
+   variable (zsh does not word-split it, so argparse sees one argument). `python3 <skill-dir>/scripts/ledger.py delta
    --repo <owner/repo> --pr <n> --sha <head>` -> `FULL_REHUNT` or
    `DELTA_SINCE <sha>`. Besides no rounds, last round not complete and last
    round skipped (`--skip-review`/`--inline`), `delta` also forces
@@ -263,9 +264,12 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    guard is ungated, work behind it still ran), every other binding of the
    names the changed lines read, and every caller from outside the file.
 8. **Write** REVIEW-PR-<n>.md at project root (format below) and mirror
-   each surviving finding into the ledger (`ledger.py upsert ... --sha
-   <head>`; re-confirmed old findings keep their id; fixed ones
-   `set-status --status fixed`).
+   each surviving finding into the ledger in one call: write a JSON list of
+   `{id, title, file, line, severity, provenance}` objects to
+   `<outdir>/findings.json`, then `ledger.py upsert --from-json
+   <outdir>/findings.json --sha <head>` (re-confirmed old findings keep
+   their id; fixed ones go in `<outdir>/statuses.json` as `{id, status}`
+   for one `set-status --from-json <outdir>/statuses.json`).
 9. **Cleanup, backgrounded, one call per worktree.** Each worktree gets its
    own backgrounded Bash call so one hang never blocks the others; never
    wait on it. In it: `git worktree remove <worktree>` (no `--force`); only

@@ -409,3 +409,97 @@ def test_findingless_partial_stays_partial(tmp_path):
     text = "No findings.\nPARTIAL: ran out of budget\n"
     assert classify(tmp_path, "complete.md", "No findings.\nCOMPLETE\n") == "STUB"
     assert classify(tmp_path, "partial.md", text) == "PARTIAL ran out of budget"
+
+
+BATCH = [
+    {
+        "id": f"f{i}",
+        "title": f"t{i}",
+        "file": "x.py",
+        "line": str(i),
+        "severity": "blocker",
+        "provenance": "hunter",
+    }
+    for i in range(3)
+] + [{"id": "f0", "line": "9", "status": "fixed"}]
+
+
+def test_batch_upsert_matches_single_upserts(tmp_path):
+    """One --from-json upsert leaves the ledger exactly as the same entries upserted one by one."""
+    single, batched = tmp_path / "single", tmp_path / "batched"
+    for entry in BATCH:
+        flags = [x for k, v in entry.items() for x in (f"--{k}", v)]
+        assert led(single, "upsert", *flags, "--sha", "aaa").returncode == 0
+    src = tmp_path / "findings.json"
+    src.write_text(json.dumps(BATCH))
+    result = led(batched, "upsert", "--from-json", str(src), "--sha", "aaa")
+    assert result.returncode == 0, result.stderr
+    ledgers = [
+        json.loads((d / "o__r__pr7.json").read_text()) for d in (single, batched)
+    ]
+    assert ledgers[0] == ledgers[1]
+    assert len(ledgers[1]["findings"]) == 3
+
+
+def test_batch_with_a_bad_entry_writes_nothing(tmp_path):
+    """A batch is all-or-nothing: one bad entry is named on stderr and the ledger is untouched."""
+    src = tmp_path / "findings.json"
+    for i, bad in enumerate(
+        [{"id": "f9", "status": "closed"}, {"id": "f9", "titel": "typo"}, "f9"]
+    ):
+        src.write_text(json.dumps([BATCH[0], bad]))
+        result = led(tmp_path, "upsert", "--from-json", str(src), "--sha", "aaa")
+        assert result.returncode == 1
+        assert "entry 1" in result.stderr, bad
+    src.write_text("[{broken")
+    assert led(tmp_path, "upsert", "--from-json", str(src)).returncode == 1
+    assert not (tmp_path / "o__r__pr7.json").exists()
+
+
+def test_batch_set_status(tmp_path):
+    """set-status --from-json applies every status, or none when an id is unknown."""
+    src = tmp_path / "findings.json"
+    src.write_text(json.dumps(BATCH[:3]))
+    led(tmp_path, "upsert", "--from-json", str(src), "--sha", "aaa")
+    statuses = tmp_path / "statuses.json"
+    statuses.write_text(
+        json.dumps([{"id": "f0", "status": "fixed"}, {"id": "nope", "status": "fixed"}])
+    )
+    result = led(tmp_path, "set-status", "--from-json", str(statuses))
+    assert result.returncode == 1
+    assert "entry 1: no finding with id nope" in result.stderr
+    data = json.loads((tmp_path / "o__r__pr7.json").read_text())
+    assert data["findings"][0]["status"] == "open"
+    statuses.write_text(
+        json.dumps([{"id": "f0", "status": "fixed"}, {"id": "f2", "status": "wontfix"}])
+    )
+    assert led(tmp_path, "set-status", "--from-json", str(statuses)).returncode == 0
+    data = json.loads((tmp_path / "o__r__pr7.json").read_text())
+    assert [f["status"] for f in data["findings"]] == ["fixed", "open", "wontfix"]
+
+
+def test_findings_without_ids_stay_distinct_and_rematch(tmp_path):
+    """Upserts without an id are keyed by file and title: two findings stay two, and the same one next round updates."""
+    src = tmp_path / "findings.json"
+    src.write_text(
+        json.dumps(
+            [
+                {"title": "Leaks a handle", "file": "a.py", "line": "3"},
+                {"title": "Races on retry", "file": "b.py", "line": "9"},
+            ]
+        )
+    )
+    assert (
+        led(tmp_path, "upsert", "--from-json", str(src), "--sha", "aaa").returncode == 0
+    )
+    flags = ["--title", "leaks a handle ", "--file", "a.py", "--line", "4"]
+    assert led(tmp_path, "upsert", *flags, "--sha", "bbb").returncode == 0
+    findings = json.loads((tmp_path / "o__r__pr7.json").read_text())["findings"]
+    assert len(findings) == 2
+    first = next(f for f in findings if f["file"] == "a.py")
+    assert (first["line"], first["first_seen_sha"], first["last_seen_sha"]) == (
+        "4",
+        "aaa",
+        "bbb",
+    )
+    assert all(f["id"] for f in findings)

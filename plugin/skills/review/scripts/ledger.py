@@ -1,5 +1,6 @@
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,8 @@ import verify_citations  # noqa: E402
 FULL_REHUNT_EVERY = 5
 CHECKED = re.compile(r"^[\s>#*_`-]*checked[*_`]*\s*:?[*_`]*\s*(?P<rest>.*)$", re.I)
 NAMED = re.compile(r"`[^`]+`|\w\w/|/\w\w|\w\w\.[A-Za-z]")  # \w\w keeps e.g./i.e. out
+STATUSES = ["open", "fixed", "regressed", "wontfix"]
+UPSERT_FIELDS = ("id", "title", "file", "line", "severity", "provenance", "status")
 FINDING = re.compile(
     r"^(?:#+|[-*>]|\d+[.)])\W*(?:blocker|should[- ]fix|landmine|bug[- ]bait"
     r"|worth confirming|question|nitpick)[*_`]*\s*[:\]]",
@@ -78,6 +81,55 @@ def _classify(path):
     return "MALFORMED"
 
 
+def _finding_id(entry):
+    """A finding without an id is keyed by file and title, so distinct findings never merge."""
+    if entry.get("id"):
+        return entry["id"]
+    key = f"{entry.get('file') or ''}|{(entry.get('title') or '').strip().lower()}"
+    return "h" + hashlib.sha1(key.encode()).hexdigest()[:10]
+
+
+def _upsert(data, entry, sha):
+    entry = {**entry, "id": _finding_id(entry)}
+    f = next((x for x in data["findings"] if x["id"] == entry["id"]), None)
+    rec = {k: entry.get(k) for k in UPSERT_FIELDS} | {"last_seen_sha": sha}
+    if f:
+        f.update({k: v for k, v in rec.items() if v is not None})
+    else:
+        rec["status"] = rec["status"] or "open"
+        rec["first_seen_sha"] = sha
+        data["findings"].append(rec)
+
+
+def _set_status(data, entry):
+    f = next((x for x in data["findings"] if x["id"] == entry["id"]), None)
+    if f is None:
+        return f"no finding with id {entry['id']}"
+    f["status"] = entry["status"]
+    return None
+
+
+def _read_batch(path, fields, required):
+    try:
+        entries = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        return None, f"--from-json {path}: {type(e).__name__}: {e}"
+    if not isinstance(entries, list):
+        return None, f"--from-json {path}: expected a JSON list"
+    out = []
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict):
+            return None, f"entry {i}: expected an object"
+        if extra := set(e) - fields:
+            return None, f"entry {i}: unknown fields {sorted(extra)}"
+        if missing := [k for k in required if e.get(k) is None]:
+            return None, f"entry {i}: missing {missing}"
+        if e.get("status") is not None and e["status"] not in STATUSES:
+            return None, f"entry {i}: invalid status {e['status']!r}"
+        out.append({k: None if v is None else str(v) for k, v in e.items()})
+    return out, None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -107,9 +159,8 @@ def main(argv=None):
     ap.add_argument("--line")
     ap.add_argument("--severity")
     ap.add_argument("--provenance")
-    ap.add_argument(
-        "--status", choices=["open", "fixed", "regressed", "wontfix"], default=None
-    )
+    ap.add_argument("--status", choices=STATUSES, default=None)
+    ap.add_argument("--from-json")
     a = ap.parse_args(argv)
     if a.cmd == "classify-report":
         if not a.file:
@@ -120,9 +171,23 @@ def main(argv=None):
     if a.cmd in ("round-start", "round-end") and not a.sha:
         print(f"{a.cmd} requires --sha", file=sys.stderr)
         return 1
-    if a.cmd == "set-status" and a.status is None:
+    if a.cmd == "set-status" and a.status is None and not a.from_json:
         print("set-status requires --status", file=sys.stderr)
         return 1
+    single = {
+        "upsert": {k: getattr(a, k) for k in UPSERT_FIELDS},
+        "set-status": {"id": a.id, "status": a.status},
+    }.get(a.cmd)
+    batch = [single]
+    if a.from_json and single is not None:
+        batch, err = _read_batch(
+            a.from_json,
+            set(single),
+            ["id", "status"] if a.cmd == "set-status" else [],
+        )
+        if err:
+            print(err, file=sys.stderr)
+            return 1
     lock = open(str(_path(a)) + ".lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     try:
@@ -149,29 +214,13 @@ def main(argv=None):
                 x.strip() for x in (a.skipped or "").split(",") if x.strip()
             ]
         elif a.cmd == "upsert":
-            f = next((x for x in data["findings"] if x["id"] == a.id), None)
-            rec = {
-                "id": a.id,
-                "title": a.title,
-                "file": a.file,
-                "line": a.line,
-                "severity": a.severity,
-                "provenance": a.provenance,
-                "status": a.status,
-                "last_seen_sha": a.sha,
-            }
-            if f:
-                f.update({k: v for k, v in rec.items() if v is not None})
-            else:
-                rec["status"] = rec["status"] or "open"
-                rec["first_seen_sha"] = a.sha
-                data["findings"].append(rec)
+            for entry in batch:
+                _upsert(data, entry, a.sha)
         elif a.cmd == "set-status":
-            f = next((x for x in data["findings"] if x["id"] == a.id), None)
-            if f is None:
-                print(f"no finding with id {a.id}", file=sys.stderr)
-                return 1
-            f["status"] = a.status
+            for i, entry in enumerate(batch):
+                if err := _set_status(data, entry):
+                    print(f"entry {i}: {err}" if a.from_json else err, file=sys.stderr)
+                    return 1
         elif a.cmd == "report":
             print(f"# Ledger {a.repo}#{a.pr}")
             for r in data["rounds"][-3:]:
