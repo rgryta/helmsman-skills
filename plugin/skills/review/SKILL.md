@@ -110,7 +110,7 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    `<skill-dir>/phase0-launch.md` (commit first, test runner, managed
    background launch of `scripts/run_phase0.py`, bounded collect, fallback
    FACTS file). Do step 4 while it runs. For a stack, launch one PR's
-   Phase 0 at a time (stack-mode.md) - parallel runs queue on the heavy-check
+   Phase 0 at a time (`../fold-review/stack-mode.md`) - parallel runs queue on the heavy-check
    lock and skip, they do not finish sooner. SKIPPED sections are stated
    confidence ceilings, never silently ignored. An `ERROR:` section is not a
    ceiling: that check crashed, so its class went unhunted. Name the crashed
@@ -133,7 +133,7 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    For a single PR that is the four layers below (two under
    `--skip-review`). For a stack, run steps 2-4 for every PR, then send the
    layers in waves of whole PRs, never more `Agent` calls in one message
-   than the CLI's cap in `stack-mode.md` (16 in Claude, 6 in Codex): a PR
+   than the CLI's cap in `../fold-review/stack-mode.md` (16 in Claude, 6 in Codex): a PR
    joins the next wave once its FACTS exists, and each wave is collected in
    step 6 before the next goes out. Each prompt resolves `<worktree>`,
    `<outdir>` and `<n>` to that PR's own paths and number, so

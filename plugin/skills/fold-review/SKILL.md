@@ -226,9 +226,9 @@ that file matches neither step 5's sensitive-path list nor CI config
 (`.github/`, pipeline files): skip this step and report it as
 `skipped: trivial change`.
 
-Under `--skip-review`, follow `skip-review.md` (already read per Flags
+Under `--skip-review`, follow `../review/skip-review.md` (already read per Flags
 above) - this step is skipped entirely. Under `--inline`, follow
-`inline-mode.md` (already read per Flags above) for how this dispatch runs.
+`../review/inline-mode.md` (already read per Flags above) for how this dispatch runs.
 
 Dispatch `../review/hunter.md` and `../review/edge.md` (relative to this
 skill's base dir) as two `Agent` calls in ONE message, on the model in
@@ -314,7 +314,7 @@ add.
 Full tier if ANY of: more than one file touched, more than one finding
 fixed, any touched path matches the sensitive-path list, or the spec
 explicitly rejects a finding. Otherwise lightweight tier. Under
-`--skip-review`, per `skip-review.md`, the full tier runs only when a touched
+`--skip-review`, per `../review/skip-review.md`, the full tier runs only when a touched
 path matches the sensitive-path list, whatever the other sizing triggers say.
 
 - **Lightweight tier** (no subagent dispatch) - read `FACTS-<n>.md`,
@@ -328,7 +328,7 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   touched - write `<outdir>/CONTEXT-<n>.md` once (spec digest, finding list,
   touched-file map, head commit, FACTS location, the worktree path and the
   diff range `<pre-fold-sha>..HEAD`). Under `--inline`, follow
-  `inline-mode.md` (already read per Flags above) for how every layer's
+  `../review/inline-mode.md` (already read per Flags above) for how every layer's
   dispatches run. Otherwise, dispatch, in ONE message, as `review`'s step 5
   does (the calls return at once; keep each task id, never name an agent or
   collect it via SendMessage - the findings files are the only result;
