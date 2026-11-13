@@ -180,3 +180,114 @@ def test_ci_carries_a_local_test_run_that_gave_no_verdict():
     assert "checks in `skipping`" in block and "do not count either way" in block
     for token in ("gh pr checks", "`pass` or `pending`", "FAIL` always counts"):
         assert token in block, token
+
+
+STACK = FOLD.parent / "stack-mode.md"
+REVIEW = SCRIPTS.parent / "SKILL.md"
+PIPELINE = SCRIPTS.parents[1] / "feature-pipeline" / "SKILL.md"
+
+
+def test_stack_push_is_the_only_lease_exception_and_stays_on_own_branches():
+    """Force-with-lease is allowed only for a stack cascade, with an expected SHA, on the gh user's own PRs."""
+    fold, stack = _flat(), " ".join(STACK.read_text().split())
+    assert (
+        "stack-mode.md"
+        in fold.split("### 5. Review the diff")[0].split("**Push before gating.**")[1]
+    )
+    assert "--force-with-lease=<branch>:<expected-sha>" in stack
+    assert "never bare `--force`" in stack
+    assert "--json author" in stack and "gh api user" in stack
+
+
+def test_stack_rebase_is_verified_before_any_push():
+    """Every dependent's rebase is checked for completion and scope before anything is pushed."""
+    stack = " ".join(STACK.read_text().split())
+    assert "git rebase --onto <new-parent-tip> <old-parent-tip>" in stack
+    for token in (
+        "rebase-merge",
+        "the branch tip changed",
+        "<parent>...<branch>",
+        "push nothing",
+    ):
+        assert token in stack, token
+    assert stack.index("Verify every rebase before any push") < stack.index(
+        "git push --force-with-lease"
+    )
+
+
+def test_stack_gates_once_at_the_chain_tip_and_serialises_phase0():
+    """A stack runs one gate at its tip and never launches its heavy Phase 0 runs side by side."""
+    stack = " ".join(STACK.read_text().split())
+    assert "One gate for the whole chain" in stack
+    assert "one at a time" in stack
+    assert "Phase 0 at a time" in " ".join(REVIEW.read_text().split())
+
+
+def test_dispatch_waves_stay_under_the_cli_cap():
+    """No message carries more agents than the CLI accepts; review no longer sends n_prs * 4 at once."""
+    stack = " ".join(STACK.read_text().split())
+    assert "16 in Claude, 6 in Codex" in stack
+    review = " ".join(REVIEW.read_text().split())
+    assert "n_prs * 4" not in review
+    assert "stack-mode.md" in review
+
+
+def test_per_pr_mode_uses_unnamed_inline_agents():
+    """One background agent per PR, run --inline, never named or messaged."""
+    stack = " ".join(STACK.read_text().split())
+    for token in (
+        "ONE unnamed background `Agent` per PR",
+        "--inline",
+        "never address them by SendMessage",
+    ):
+        assert token in stack, token
+
+
+def test_every_required_dispatch_prompt_forbids_spawning_agents():
+    """Each verbatim dispatch preamble carries the no-nested-agents sentence."""
+    assert _flat().count("Do NOT post anything to GitHub. Do not spawn agents.") == 2
+    for path in (REVIEW, PIPELINE):
+        assert "Do NOT post anything to GitHub. Do not spawn agents." in " ".join(
+            path.read_text().split()
+        ), path
+    assert '"Do not spawn agents."' in STACK.read_text()
+
+
+def test_stack_push_stops_at_first_foreign_pr_and_resolves_only_pushed_folds():
+    """Nothing above a PR the user does not own is pushed, and threads resolve only for folds on the remote."""
+    stack = " ".join(STACK.read_text().split())
+    assert "stops at the first PR the user does not own" in stack
+    assert "folded locally, not pushed" in stack
+    assert "run only for PRs whose fold reached the remote" in stack
+
+
+def test_stack_folds_only_named_prs_each_with_its_own_input():
+    """Walked-in PRs are only rebased; several inputs are accepted, one per PR."""
+    stack = " ".join(STACK.read_text().split())
+    assert "Only the PRs passed in are folded" in stack
+    assert "for each named PR, with its own input" in stack
+    fold = FOLD.read_text()
+    assert "<pr-number-or-link-or-file-path>..." in fold
+    assert "one input per PR" in " ".join(fold.split())
+    assert "triaged `REVIEW-PR-<n>.md`" in " ".join(PIPELINE.read_text().split())
+
+
+def test_stack_tips_recorded_once_and_ancestry_checked_before_rebase():
+    """Old tips are fixed before the first fold, checked as ancestors, and the lease follows each push."""
+    stack = " ".join(STACK.read_text().split())
+    assert "Before the first fold" in stack
+    assert "`<old-tip>` never changes during the flow" in stack
+    assert "git merge-base --is-ancestor <old-parent-tip> HEAD" in stack
+    assert "git reflog --format=%H <parent>" in stack
+    assert stack.index("--is-ancestor") < stack.index(
+        "git rebase --onto <new-parent-tip>"
+    )
+    assert "becomes the pushed SHA after each successful push" in stack
+
+
+def test_stack_scope_check_uses_recorded_shas_and_handles_squash_merged_parent():
+    """The file-scope check needs no gh file list, and a squash-merged parent's commits are rebased off."""
+    stack = " ".join(STACK.read_text().split())
+    assert "--json files" not in stack
+    assert "git diff --name-only <old-parent-tip>...<old-tip>" in stack
+    assert "squash-merged" in stack and "git rebase --onto origin/<base>" in stack
