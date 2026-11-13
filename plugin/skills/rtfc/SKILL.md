@@ -20,6 +20,7 @@ history.
 Examples:
 - `/rtfc sharing modal implementation decisions`
 - `/rtfc database schema changes --id 5168bd70-86c2-4e6b-8a29-ba5c9345d414`
+- `/rtfc find the session where we chose the retry policy`
 
 ## Instructions
 
@@ -33,18 +34,22 @@ Split $ARGUMENTS into:
 
 If prompt is empty, abort with: "Usage: /rtfc <prompt> [--id <session-uuid>]"
 
+Without `--id`, if the prompt asks to find a past session ("find the session
+where...", "which chat discussed...", "prior decisions on..."), use **search
+mode** (step 2a) instead of `current`.
+
 ### 2. Resolve the history file
 
 Resolve history from the active client. Claude Code stores project histories
 under `~/.claude/projects/`; each project directory is the absolute working
-directory with `/` replaced by `-`. Codex stores rollout files under
-`~/.codex/sessions/YYYY/MM/DD/`.
+directory with every non-alphanumeric character (`/`, `.`, `_`, ...) replaced
+by `-`. Codex stores rollout files under `~/.codex/sessions/YYYY/MM/DD/`.
 
 **Claude Code:**
 ```bash
-ls -d ~/.claude/projects/*/ | head -20
+ls -d ~/.claude/projects/"$(printf '%s' "$PWD" | sed 's/[^A-Za-z0-9]/-/g')"/
 ```
-Match the directory corresponding to the current working directory. For
+That is the directory for the current working directory. For
 `current`, use its most recently modified JSONL file. For an explicit ID, use
 `~/.claude/projects/<project-dir>/<session_id>.jsonl`.
 
@@ -62,11 +67,36 @@ because it was modified most recently.
 
 Store the resolved absolute path as `$HISTORY_FILE`.
 
+### 2a. Search mode
+
+Find sessions mentioning the query across both clients. Subagent transcripts
+live deeper than `~/.claude/projects/<dir>/`, so `--max-depth 2` skips them:
+
+```bash
+Q='<search terms from the prompt>'
+{ rg -c -i --max-depth 2 --glob '*.jsonl' -- "$Q" ~/.claude/projects
+  rg -c -i --glob 'rollout-*.jsonl' -- "$Q" ~/.codex/sessions; } 2>/dev/null |
+while IFS= read -r hit; do
+  f=${hit%:*}
+  printf '%s\t%s\t%s\n' "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")" "${hit##*:}" "$f"
+done | sort -k2,2nr -k1,1nr | head -6
+```
+
+`$Q` is one case-insensitive regex: use one distinctive word or phrase, or
+`term1|term2`, never a whole sentence.
+
+Columns are mtime, hit count, path. Drop the current session's own file (it
+matches its own prompt), show the top 5 with their dates and hit counts, then
+pick the best match - the most hits, preferring the more recent on a near
+tie - as `$HISTORY_FILE` and continue with step 3.
+
 ### 3. Extract and index messages
 
 Read the JSONL file. Each line is a JSON object. Build a message index by processing each line:
 
 ```bash
+RTFC_INDEX=$(mktemp "${TMPDIR:-/tmp}/rtfc_messages.XXXXXX")
+echo "$RTFC_INDEX"
 python3 -c "
 import json, sys
 
@@ -113,6 +143,8 @@ with open(sys.argv[1]) as f:
         content = entry.get('message', {}).get('content', [])
         text_parts = []
         tool_names = []
+        if isinstance(content, str):
+            content = [content]
         for block in (content if isinstance(content, list) else []):
             if isinstance(block, dict):
                 if block.get('type') == 'text':
@@ -123,6 +155,8 @@ with open(sys.argv[1]) as f:
                 text_parts.append(block)
 
         text = ' '.join(text_parts)
+        if not text and not tool_names:  # tool_result-only user entries
+            continue
         preview = text[:200].replace('\n', ' ') if text else ''
         tools = ', '.join(tool_names) if tool_names else ''
 
@@ -139,7 +173,7 @@ with open(sys.argv[1]) as f:
 
 # Output as JSON
 json.dump(messages, sys.stdout, indent=2)
-" "$HISTORY_FILE" > /tmp/rtfc_messages.json
+" "$HISTORY_FILE" > "$RTFC_INDEX"
 ```
 
 ### 4. Focus extraction
@@ -148,7 +182,7 @@ Now you have a full message index. Your job is to **read through the messages** 
 
 Do this in passes:
 
-**Pass 1 - Scan previews**: Read `/tmp/rtfc_messages.json` and identify candidate messages by scanning previews and tool usage for relevance to the prompt.
+**Pass 1 - Scan previews**: Read the `$RTFC_INDEX` file (the path echoed in step 3) and identify candidate messages by scanning previews and tool usage for relevance to the prompt.
 
 **Pass 2 - Deep read**: For each candidate message, read the actual JSONL line from `$HISTORY_FILE` to get full content. Use `sed -n '<line>p'` or read with offset to extract specific lines.
 

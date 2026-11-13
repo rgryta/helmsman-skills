@@ -1,6 +1,6 @@
 ---
 name: prune-branches
-description: Audit local git branches, show status table, prune merged/stale branches, and optionally rebase stale-but-active branches onto the remote's current default branch
+description: Use when local git branches or worktrees pile up and need an audit or cleanup - "prune branches", "clean up merged branches", "which branches can I delete", or stale-but-active branches need rebasing onto the remote's current default branch
 argument-hint: "[repo-path]"
 allowed-tools: Bash, Read, Edit, Write
 ---
@@ -29,7 +29,13 @@ When this skill is invoked:
    - Local HEAD SHA
    - Whether `origin/<branch>` exists
    - Whether local and remote are synced, diverged, or local-only
-   - PR number, state (OPEN/MERGED/CLOSED), and title via `gh pr list --head <branch> --state all --json number,state,title --limit 1`
+   - PR number, state (OPEN/MERGED/CLOSED), and head SHA from ONE batch call,
+     joined to the branches on `headRefName` (never one `gh pr list --head`
+     per branch):
+     `gh pr list --author @me --state all --limit 1000 --json headRefName,headRefOid,state,number,title`.
+     If several PRs share a `headRefName`, use the OPEN one, else the newest.
+     A branch whose PR someone else authored won't appear - treat it as
+     no-PR (Orphan), never as safe to delete.
 
 3. **Check worktrees.** Run `git worktree list`. If any worktree points to a branch that has been merged via PR, flag it for removal.
 
@@ -37,6 +43,7 @@ When this skill is invoked:
 
 5. **Categorize branches:**
    - **Safe to delete:** PR is MERGED and local is synced with remote (or branch is identical to another merged branch)
+   - **Safe to delete (merged, remote branch deleted):** PR is MERGED, `origin/<branch>` is gone (auto-deleted on merge), and the local tip equals the PR's `headRefOid` - nothing local is missing from what merged
    - **Worktree cleanup:** worktree exists but branch is merged
    - **Needs attention:** diverged from remote, or PR is CLOSED (not merged)
    - **Active:** PR is OPEN
@@ -49,7 +56,7 @@ When this skill is invoked:
    - Remove worktrees first: `git worktree remove <path>`. If it fails with "modified or untracked files" or "Directory not empty", **stop and inspect** with `git -C <path> status --short` and `ls <path>`. Report uncommitted/untracked state to the user before forcing — never blanket `--force` without confirmation.
    - For worktrees that are no longer git-tracked but still have leftover directories: use `rm -rf <path>` after verifying with `git -C <path> status` returns "fatal: not a git repository".
    - Then delete branches: `git branch -d <branch>` for merged, `git branch -D <branch>` only for branches the user explicitly approved that aren't merged to HEAD but are confirmed merged via PR
-   - If a `-d` fails because git doesn't see the merge (squash-merged PRs), verify the branch tip matches the remote tracking branch or the merged PR, then use `-D`
+   - If a `-d` fails because git doesn't see the merge (squash-merged PRs), prove the merge by comparing the local tip (`git rev-parse <branch>`) with the merged PR's `headRefOid` from the batch call; equal means the squash covered every local commit, so use `-D`. A different tip has unmerged local commits - move it to Needs attention. Never fetch `refs/pull/*` to check this.
 
 8. **Show final state** — remaining local branches as a clean table.
 
