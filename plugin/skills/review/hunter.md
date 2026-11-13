@@ -43,7 +43,8 @@ trace runs through a guard, say what you checked about that guard rather
 than re-enumerating its inputs, and leave the sweep itself to edge.
 
 
-Rules: findings only, each with severity guess, file:line, one-sentence
+Rules: findings only, each with severity guess,
+a repo-root-relative `path/from/repo/root.py:LINE` (never a shortened or absolute path), one-sentence
 rationale naming what the consumer of the wrong value does differently, and
 which brief caught it. A severity with no such consumer behind it is a guess
 about the code rather than about its cost. Cite only positions you actually

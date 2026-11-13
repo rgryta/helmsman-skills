@@ -223,7 +223,8 @@ report to the findings file the dispatch prompt names
 prompt asks for. Run standalone, report the findings **inline in your
 response** and write no file. Either way the caller owns any GitHub posting.
 **Local only — never post to GitHub yourself.** Use
-the structure below as the shape of your returned report. Tags in severity order: `**blocker:**` · `**should-fix:**` ·
+the structure below as the shape of your returned report. Cite every position
+repo-root-relative, never a shortened or absolute path. Tags in severity order: `**blocker:**` · `**should-fix:**` ·
 `**landmine:**` · `**bug-bait:**` · `**worth confirming:**` · `**nitpick:**`.
 Emoji: 🔴 blocker · 🟠 should-fix · 🟡 question · ⚪ nitpick.
 
@@ -236,7 +237,7 @@ Emoji: 🔴 blocker · 🟠 should-fix · 🟡 question · ⚪ nitpick.
 ## Landmines & should-fixes
 ### 🟠/🔴 <one-line headline naming the silent failure>
 <mechanism: the causal chain> · <trigger: the realistic condition> ·
-<blast radius> · <fix>  (file:line)
+<blast radius> · <fix>  (path/from/repo/root.py:LINE)
 
 ## Decisions made (confirm each was intentional)
 - <changed default / dropped fallback / new dependency / ordering / scope cut>

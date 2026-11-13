@@ -41,7 +41,8 @@ one site and not at its twin is the largest recurring class of review
 findings, so for each entry say whether the reasoning applies there
 too. The section finds verbatim survivors only.
 
-Rules: findings only, each with severity guess, file:line, and a
+Rules: findings only, each with severity guess,
+a repo-root-relative `path/from/repo/root.py:LINE` (never a shortened or absolute path), and a
 one-sentence rationale naming what the consumer of the wrong value does
 differently. A severity with no such consumer behind it is a guess about
 the code rather than about its cost. Cite only positions you actually read
