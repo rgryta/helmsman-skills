@@ -1,5 +1,12 @@
+import pytest
+
 from .conftest import _git, commit_all
 from .test_phase0 import load
+
+
+@pytest.fixture(autouse=True)
+def _worktree(tmp_path):
+    _git(tmp_path, "init", "-q", "-b", "main")
 
 
 def test_in_range_citations_all_resolve(tmp_path, capsys):
@@ -150,3 +157,20 @@ def test_bare_host_and_port_is_not_a_citation(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "BAD" not in out
     assert "CHECKED: 1 citation(s)" in out
+
+
+@pytest.mark.parametrize("kind", ["missing", "not-git"])
+def test_a_path_that_is_not_a_worktree_fails_instead_of_passing(
+    kind, tmp_path, tmp_path_factory, capsys
+):
+    """A wrong worktree path exits 2 instead of dropping every bare citation and passing."""
+    vc = load("verify_citations", "verify_citations.py")
+    root = tmp_path_factory.mktemp("outdir")
+    if kind == "missing":
+        root = root / "does-not-exist"
+    findings = tmp_path / "REVIEW-7-hunter.md"
+    findings.write_text("see `foo.py:12` and bar.py:3\n")
+    assert vc.main([str(root), str(findings)]) == 2
+    out = capsys.readouterr().out
+    assert f"NOT_A_WORKTREE: {root}" in out
+    assert "ALL_CITATIONS_RESOLVE" not in out

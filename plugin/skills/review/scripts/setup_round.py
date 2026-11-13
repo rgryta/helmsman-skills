@@ -76,10 +76,14 @@ def _lease_path(worktree):
 
 
 def _read_lease(path):
+    """The lease, None when there is none, {} when the file is empty or corrupt (a crashed writer: stale)."""
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        lease = json.loads(path.read_text())
+    except FileNotFoundError:
         return None
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return lease if isinstance(lease, dict) else {}
 
 
 def _holds(lease, pid, tag):
@@ -89,7 +93,7 @@ def _holds(lease, pid, tag):
 def take_lease(worktree, pid, tag):
     path = _lease_path(worktree)
     current = _read_lease(path)
-    if current is not None and not _holds(current, pid, tag):
+    if current and not _holds(current, pid, tag):
         if _alive(current.get("pid", 0)):
             raise SetupError(
                 "worktree is leased by another live session",
@@ -100,8 +104,10 @@ def take_lease(worktree, pid, tag):
             )
     if current is not None:
         path.unlink(missing_ok=True)
+    tmp = path.with_name(f"{LEASE_NAME}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps({"pid": pid, "tag": tag, "ts": time.time()}))
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        os.link(tmp, path)  # atomic and exclusive: never seen half-written
     except FileExistsError:
         raise SetupError(
             "lost a race for the worktree lease",
@@ -109,8 +115,8 @@ def take_lease(worktree, pid, tag):
             worktree=str(worktree),
             holder=_read_lease(path),
         ) from None
-    with os.fdopen(fd, "w") as f:
-        json.dump({"pid": pid, "tag": tag, "ts": time.time()}, f)
+    finally:
+        tmp.unlink(missing_ok=True)
     return str(path)
 
 
@@ -119,7 +125,7 @@ def release_lease(worktree, pid, tag):
     current = _read_lease(path)
     if current is None:
         return {"ok": True, "released": False, "worktree": str(worktree)}
-    if not _holds(current, pid, tag) and _alive(current.get("pid", 0)):
+    if current and not _holds(current, pid, tag) and _alive(current.get("pid", 0)):
         raise SetupError(
             "lease belongs to another live session",
             code=3,
@@ -129,6 +135,15 @@ def release_lease(worktree, pid, tag):
         )
     path.unlink(missing_ok=True)
     return {"ok": True, "released": True, "worktree": str(worktree)}
+
+
+def _drop_own_lease(worktree, pid, tag):
+    try:
+        path = _lease_path(worktree)
+    except (SetupError, OSError):
+        return
+    if _holds(_read_lease(path), pid, tag):
+        path.unlink(missing_ok=True)
 
 
 def prune_runs(pr_dir, prefix, keep):
@@ -196,6 +211,35 @@ def _review_worktree(checkout, path, sha, pid, tag):
     return reused, lease
 
 
+def _was_pushed(path, branch, upstream):
+    """True when HEAD is contained in a commit that came from or went to the remote, so a reset loses nothing."""
+    tips = _run(
+        ["git", "reflog", "--format=%H", upstream], cwd=path, check=False
+    ).stdout.split()
+    synced = {
+        subject
+        for ref in (upstream, f"refs/remotes/{upstream}")
+        for subject in (
+            f"branch: Created from {ref}",
+            f"reset: moving to {ref}",
+            f"merge {ref}: Fast-forward",
+        )
+    }  # exact subjects only: a commit or merge subject can name the upstream without matching it
+    for line in _run(
+        ["git", "reflog", "--format=%H %gs", branch], cwd=path, check=False
+    ).stdout.splitlines():
+        sha, _, subject = line.partition(" ")
+        if subject in synced:
+            tips.append(sha)
+    return any(
+        _run(
+            ["git", "merge-base", "--is-ancestor", "HEAD", t], cwd=path, check=False
+        ).returncode
+        == 0
+        for t in tips
+    )
+
+
 def _fold_worktree(checkout, path, branch, sha, pid, tag):
     reused = path.exists()
     if not reused:
@@ -208,7 +252,20 @@ def _fold_worktree(checkout, path, branch, sha, pid, tag):
             worktree=str(path),
         )
     _require_clean(path)
-    _run(["git", "merge", "-q", "--ff-only", f"origin/{branch}"], cwd=path)
+    upstream = f"origin/{branch}"
+    if (
+        _run(
+            ["git", "merge", "-q", "--ff-only", upstream], cwd=path, check=False
+        ).returncode
+        != 0
+    ):
+        if not _was_pushed(path, branch, upstream):
+            raise SetupError(
+                f"{branch} has commits {upstream} never had; rebase them onto {upstream} "
+                "or drop them, then rerun; never push over the rewrite",
+                worktree=str(path),
+            )
+        _run(["git", "reset", "-q", "--hard", upstream], cwd=path)
     at = _run(["git", "rev-parse", "HEAD"], cwd=path).stdout.strip()
     if at != sha:
         raise SetupError(
@@ -275,6 +332,39 @@ def rebased_commits(worktree, base_ref, old, new):
     return changed, sorted(files)
 
 
+def _hand_edited_merges(worktree, since, head, base_ref):
+    """(PR merges in since..head whose result differs from git's automatic merge, the files that differ)."""
+    merges, files = [], set()
+    for m in _run(
+        [
+            "git",
+            "rev-list",
+            "--reverse",
+            "--merges",
+            f"{since}..{head}",
+            f"^origin/{base_ref}",
+        ],
+        cwd=worktree,
+    ).stdout.split():
+        r = _run(
+            ["git", "show", "--remerge-diff", "--format=", "--name-only", m],
+            cwd=worktree,
+            check=False,
+        )
+        if (
+            r.returncode != 0
+        ):  # git < 2.36: files the merge changed against every parent
+            r = _run(
+                ["git", "diff-tree", "--cc", "--no-commit-id", "--name-only", m],
+                cwd=worktree,
+            )
+        edited = set(r.stdout.split())
+        if edited:
+            merges.append(m)
+            files |= edited
+    return merges, files
+
+
 def _round_mode(args, worktree, head, base_ref):
     delta = _ledger(
         args,
@@ -292,12 +382,18 @@ def _round_mode(args, worktree, head, base_ref):
             check=False,
         ).returncode
         != 0
+        or _run(
+            ["git", "rev-list", "--merges", f"{since}..{head}"], cwd=worktree
+        ).stdout.strip()
     ):
         rebased = rebased_commits(worktree, base_ref, since, head)
         if rebased is None:
             since = None
         else:
             commits, revisit = rebased
+            merges, edited = _hand_edited_merges(worktree, since, head, base_ref)
+            commits += merges
+            revisit = sorted(set(revisit) | edited)
     mode = "full" if not since else "rebase" if commits == [] else "delta"
     _ledger(
         args,
@@ -330,6 +426,14 @@ def setup(args):
         if args.worktree
         else checkout.parent / f"{checkout.name}-worktrees" / f"{kind}-{args.pr}"
     )
+    try:
+        return _leased_round(args, checkout, view, worktree, head)
+    except Exception:
+        _drop_own_lease(worktree, args.owner_pid, args.tag)
+        raise
+
+
+def _leased_round(args, checkout, view, worktree, head):
     if args.fold:
         reused, lease = _fold_worktree(
             checkout, worktree, view["headRefName"], head, args.owner_pid, args.tag

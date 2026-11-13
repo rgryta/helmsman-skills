@@ -30,9 +30,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    the checkout's `git remote get-url origin` (ask if ambiguous); pass
    `-R <owner>/<repo>` on any later gh call. From inside the repo's local
    checkout run `python3 <skill-dir>/scripts/setup_round.py --repo
-   <owner/repo> --pr <n> --tag <task-name>` (add `--base-dir <dir>` only to
-   move the ledger root, `--worktree <path>` only when the project's agent
-   docs place worktrees elsewhere). It runs `gh auth status`, `gh pr view`, fetches the
+   <owner/repo> --pr <n> --tag <task-name>` (add `--worktree <path>` only
+   when the project's agent docs place worktrees elsewhere). It runs `gh auth status`, `gh pr view`, fetches the
    head (`pull/<n>/head`) and `baseRefName`, adds or reuses the detached
    worktree `<repo>-worktrees/review-<n>` at `headRefOid` (re-viewing once on
    a force-push race), takes a lease on it, creates this round's `<outdir>`
@@ -88,9 +87,12 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    step 6's `round-end --complete` (no layers ran, so the round is
    complete), then write and post from the ledger; some patches new -> mode `delta` with
    `delta_commits` listing those commits: layers hunt only `git show
-   <commit>` for each plus re-read every `revisit_files` path at the new
-   head (files of old commits whose patch vanished, so a dropped or amended
-   commit's lost code is still checked), and the ledger findings carry the
+   <commit>` for each (`git show --remerge-diff <commit>` for a merge: a
+   merge is listed only when its result differs from git's automatic
+   merge) plus re-read every `revisit_files` path at the new head (files
+   of old commits whose patch vanished, so a dropped or amended commit's
+   lost code is still checked, and files hand-edited in a merge), and the
+   ledger findings carry the
    rest; history it
    cannot compare, or commits only dropped -> `full`. Delta mode: layers
    hunt the diff since that SHA (or the `delta_commits`) plus re-verify every
@@ -224,8 +226,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    before writing the review.
    Run `python3 <skill-dir>/scripts/verify_citations.py <worktree>
    <outdir>/REVIEW-<n>-*.md` before writing anything. The first argument
-   stays the WORKTREE: aiming it at `<outdir>` makes every citation report
-   BAD while the script still exits 0, so the check passes as vacuous. A
+   stays the WORKTREE: any path that is not a git checkout prints
+   `NOT_A_WORKTREE` and exits 2 instead of passing as vacuous. A
    `BAD` line means the cited file or line does not exist at this head;
    every finding resting on it is unverified until you re-locate it in the
    real file or drop it. A wrong citation alone is not grounds to discard
