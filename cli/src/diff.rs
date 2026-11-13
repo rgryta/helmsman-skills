@@ -186,6 +186,9 @@ pub fn os_error(e: &io::Error, program: &str, cwd: &str) -> String {
 
 /// `run_cmd`: (exit code, stripped stdout or else stderr); -1 TIMEOUT, -2 MISSING, -3 ERROR.
 pub fn run_cmd(args: &[&str], cwd: &str, timeout: Duration) -> (i32, String) {
+    if std::env::var_os("PATH").is_some() && crate::env::which(args[0]).is_none() {
+        return (-2, "MISSING".into());
+    }
     match run(args, cwd, timeout) {
         Ok(o) => {
             let out = python::strip(&o.stdout);
