@@ -2,7 +2,7 @@ rules:
   - id: sensitive-value-in-log
     languages: [python]
     severity: WARNING
-    message: a logging call names a secret-shaped value; a log line outlives the request that made it
+    message: a logging call names a secret-shaped value; a log line outlives the request that made it (f-string fields with !r or a format spec are not matched)
     patterns:
       # levels enumerated rather than constrained via a $LEVEL metavariable-regex:
       # print() carries no such metavariable, so the constraint would silently
@@ -15,10 +15,18 @@ rules:
           - pattern: $LOG.exception(..., $VAL, ...)
           - pattern: $LOG.critical(..., $VAL, ...)
           - pattern: print(..., $VAL, ...)
+          - pattern: $LOG.debug(..., f"...{$VAL}...", ...)
+          - pattern: $LOG.info(..., f"...{$VAL}...", ...)
+          - pattern: $LOG.warning(..., f"...{$VAL}...", ...)
+          - pattern: $LOG.error(..., f"...{$VAL}...", ...)
+          - pattern: $LOG.exception(..., f"...{$VAL}...", ...)
+          - pattern: $LOG.critical(..., f"...{$VAL}...", ...)
+          - pattern: print(..., f"...{$VAL}...", ...)
           - pattern: "$LOG.$ANY(..., extra={..., $K: $VAL, ...}, ...)"
       - metavariable-regex:
           metavariable: $VAL
-          # anchored, keyword must be the FINAL _-separated component: \b cannot
+          # anchored, keyword must be the FINAL _- or .-separated component: \b cannot
           # work because _ is a word char, so \bpassword\b never matches inside
-          # user_password, while a bare substring also matches token_count
-          regex: (?i)^(.*_)?(token|secret|password|passwd|credential|private_key|api_?key)$
+          # user_password, while a bare substring also matches token_count;
+          # page_token is a pagination cursor, not a credential
+          regex: (?i)^(.*[._])?(?<!page_)(token|secret|password|passwd|credential|private_key|api_?key)$

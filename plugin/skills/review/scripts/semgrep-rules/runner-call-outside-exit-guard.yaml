@@ -2,19 +2,35 @@ rules:
   - id: runner-call-outside-exit-guard
     languages: [python]
     severity: WARNING
-    message: config/setup call sits outside the guarded region; a crash here escapes with the wrong exit code
-    paths:
-      include:
-        - "**/run_*.py"
-        - "**/main.py"
-        - "**/cli.py"
+    message: entrypoint config call (main() or a __main__ module's top level) outside try; a crash exits with the wrong code
     patterns:
       - pattern: $CFG = $F(...)
       - metavariable-regex:
           metavariable: $F
           regex: (get_config|load_config|init_config|read_config)
+      - pattern-either:
+          - pattern-inside: |
+              def main(...):
+                  ...
+          - pattern-inside: |
+              $CFG = $F(...)
+              ...
+              if __name__ == "__main__":
+                  ...
+          - pattern-inside: |
+              if __name__ == "__main__":
+                  ...
       - pattern-not-inside: |
           try:
               ...
           except ...:
               ...
+      - pattern-not-inside: |
+          def main(...):
+              ...
+          ...
+          if __name__ == "__main__":
+              try:
+                  ...
+              except $X:
+                  ...

@@ -774,3 +774,130 @@ def test_fallback_note_survives_when_there_are_hits():
     )
     assert out.startswith("FINDINGS:")
     assert "NOTE: community packs unavailable (timed out)" in out
+
+
+def _rule_lines(rule, tmp_path, source):
+    bait = tmp_path / "bait.py"
+    bait.write_text(source)
+    out = subprocess.run(
+        [
+            *_semgrep_cmd(),
+            "--config",
+            str(RULES / rule),
+            "--json",
+            "--quiet",
+            str(bait),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    return sorted(r["start"]["line"] for r in json.loads(out.stdout)["results"])
+
+
+@pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
+def test_swallowed_exception_catches_the_named_form_too(tmp_path):
+    """`except Exception as e: pass` swallows exactly like the unnamed form; a logged or narrow except does not."""
+    lines = _rule_lines(
+        "swallowed-exception.yaml",
+        tmp_path,
+        "def f():\n"
+        "    try:\n"
+        "        x()\n"
+        "    except Exception as e:\n"
+        "        pass\n"
+        "    try:\n"
+        "        x()\n"
+        "    except BaseException:\n"
+        "        return None\n"
+        "    try:\n"
+        "        x()\n"
+        "    except Exception as e:\n"
+        "        log(e)\n"
+        "    try:\n"
+        "        x()\n"
+        "    except ValueError:\n"
+        "        pass\n",
+    )
+    assert lines == [2, 6]
+
+
+@pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
+def test_sensitive_log_rule_sees_attributes_and_fstrings_but_not_page_tokens(tmp_path):
+    """Attribute access and f-string interpolation of a secret are flagged; pagination tokens and counts are not.
+    A `!r` conversion is a known blind spot that the rule message names."""
+    lines = _rule_lines(
+        "sensitive-value-in-log.yaml",
+        tmp_path,
+        'log.info(f"key {api_key}")\n'
+        "log.info(self.api_key)\n"
+        "log.info(access_token)\n"
+        "log.info(next_page_token)\n"
+        'log.info(f"count {token_count}")\n'
+        'log.info("token refreshed")\n'
+        'log.info(f"key {api_key!r}")\n',
+    )
+    assert lines == [1, 2, 3]
+
+
+@pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
+def test_broad_except_rule_ignores_translated_raise(tmp_path):
+    """Raising a new exception, chained or not, surfaces the failure and is not a swallow."""
+    lines = _rule_lines(
+        "broad-except-around-guard.yaml",
+        tmp_path,
+        "def f():\n"
+        "    try:\n"
+        "        enforce_guard(cfg)\n"
+        "    except Exception as e:\n"
+        '        raise GuardError("x") from e\n'
+        "    try:\n"
+        "        enforce_guard(cfg)\n"
+        "    except Exception:\n"
+        '        raise GuardError("x")\n'
+        "    try:\n"
+        "        enforce_guard(cfg)\n"
+        "    except BaseException as e:\n"
+        "        log(e)\n",
+    )
+    assert lines == [10]
+
+
+@pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
+def test_runner_rule_covers_main_guard_modules_at_top_level(tmp_path):
+    """Top-level and guard-block config calls in a __main__ module are flagged; helpers and try-wrapped calls are not."""
+    lines = _rule_lines(
+        "runner-call-outside-exit-guard.yaml",
+        tmp_path,
+        "CFG = load_config()\n"
+        "\n"
+        "def helper():\n"
+        "    c = get_config()\n"
+        "\n"
+        "try:\n"
+        "    d = get_config()\n"
+        "except Exception:\n"
+        "    sys.exit(2)\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    cfg = read_config()\n",
+    )
+    assert lines == [1, 12]
+    guarded = (
+        "def main():\n"
+        "    cfg = load_config()\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    try:\n"
+        "        main()\n"
+        "    except Exception:\n"
+        "        sys.exit(2)\n"
+    )
+    assert _rule_lines("runner-call-outside-exit-guard.yaml", tmp_path, guarded) == []
+    unguarded = guarded.replace(
+        "    try:\n        main()\n    except Exception:\n        sys.exit(2)\n",
+        "    main()\n",
+    )
+    assert _rule_lines("runner-call-outside-exit-guard.yaml", tmp_path, unguarded) == [
+        2
+    ]

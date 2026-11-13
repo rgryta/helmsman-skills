@@ -39,6 +39,12 @@ def test_ruff_reports_new_violation(fixture_repo):
     assert out.startswith("FINDINGS:") and "F401" in out
 
 
+def test_ruff_line_parser_accepts_paths_with_spaces():
+    pattern = load("a_ruff", "checks/a_ruff.py")._VIOLATION_LINE
+    assert pattern.match("my dir/mod.py:1:8: F401 [*] `os` imported but unused")
+    assert not pattern.match("Found 1 error.")
+
+
 def test_uvx_fallback_fires_when_primary_missing(fixture_repo, tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
