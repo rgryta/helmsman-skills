@@ -366,7 +366,13 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   against the pushed-shape code.
   Fold every genuine finding into the worktree immediately - fix and move
   on, no re-review after fixing.
-  A layer that comes back PARTIAL or dead-after-grace is reported as a
+  Run `python3 ../review/scripts/ledger.py classify-report --repo <owner/repo>
+  --pr <n> --file <outdir>/REVIEW-<n>-<layer>.md` on each collected file; a
+  STUB (COMPLETE with no file:line citation, no severity-tagged finding line
+  and no `Checked:` line naming a file, path or backticked symbol) counts as
+  PARTIAL, after one rewrite under `--inline`; any findings a STUB file holds
+  are still folded like the rest.
+  A layer that comes back PARTIAL, STUB or dead-after-grace is reported as a
   confidence ceiling in step 8, never silently treated as clean.
 
 ### 6. Gates

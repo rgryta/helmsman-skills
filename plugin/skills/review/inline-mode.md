@@ -25,9 +25,16 @@ an `Agent` or the orchestrator itself wrote them.
 Because each layer finishes synchronously before you move to the next one,
 skip any `await_layers.py` wait for layers run this way - go straight to
 whatever the skill does next with that file. Where the skill would dispatch a
-fresh `Agent` for a missing or MALFORMED findings file, rewrite that file
+fresh `Agent` for a missing, MALFORMED or STUB findings file, rewrite that file
 yourself once instead, and record the layer PARTIAL only if it is still
-missing or MALFORMED after that.
+missing, MALFORMED or STUB after that.
+
+An inline layer is a real pass over that layer's own instructions, ending in
+its own `Checked:` line. Never write a placeholder file, and never point one
+layer's file at another layer's findings. When reviewing several PRs inline
+and a full four-layer pass per PR does not fit, say so and run `quick-mode.md`'s
+single combined brief per PR instead, labelled as a quick review, rather than
+claiming four layers.
 
 Inline layers are not independent: by the time they run you have already read
 the PR narrative and every earlier layer's findings, so `hunter.md`'s blind

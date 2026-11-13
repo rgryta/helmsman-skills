@@ -2,6 +2,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -9,8 +10,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import _verdict  # noqa: E402
+import verify_citations  # noqa: E402
 
 FULL_REHUNT_EVERY = 5
+CHECKED = re.compile(r"^[\s>#*_`-]*checked[*_`]*\s*:?[*_`]*\s*(?P<rest>.*)$", re.I)
+NAMED = re.compile(r"`[^`]+`|\w\w/|/\w\w|\w\w\.[A-Za-z]")  # \w\w keeps e.g./i.e. out
+FINDING = re.compile(
+    r"^(?:#+|[-*>]|\d+[.)])\W*(?:blocker|should[- ]fix|landmine|bug[- ]bait"
+    r"|worth confirming|question|nitpick)[*_`]*\s*[:\]]",
+    re.I,
+)
 
 
 def _path(args):
@@ -40,12 +49,29 @@ def _write_atomic(p, data):
     os.replace(tmp, p)
 
 
+def _lists_checked(lines):
+    for i, line in enumerate(lines):
+        m = CHECKED.match(line)
+        if m and NAMED.search(" ".join([m["rest"], *lines[i + 1 :]])):
+            return True
+    return False
+
+
 def _classify(path):
     try:
-        verdict, detail = _verdict.classify(Path(path).read_text())
+        text = Path(path).read_text()
     except OSError:
         return "MALFORMED"
+    verdict, detail = _verdict.classify(text)
     if verdict == "COMPLETE":
+        body = [line.strip() for line in text.splitlines() if line.strip()][:-1]
+        body.append(detail)
+        if not (
+            verify_citations.collect(text)
+            or any(FINDING.match(line) for line in body)
+            or _lists_checked(body)
+        ):
+            return "STUB"
         return "COMPLETE"
     if verdict == "PARTIAL":
         return f"PARTIAL {detail}".rstrip()

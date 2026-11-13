@@ -258,7 +258,7 @@ def test_corrupt_ledger_is_moved_aside_not_overwritten(tmp_path):
 
 def test_classify_report(tmp_path):
     f1 = tmp_path / "a.md"
-    f1.write_text("# findings\n- x\n\nCOMPLETE\n\n")
+    f1.write_text("# findings\n- x (src/a.py:3)\n\nCOMPLETE\n\n")
     f2 = tmp_path / "b.md"
     f2.write_text("# findings\nPARTIAL: ran out of budget\n")
     f3 = tmp_path / "c.md"
@@ -335,7 +335,77 @@ def test_full_mode_round_resets_delta_streak(tmp_path):
 def test_classify_report_accepts_a_complete_that_narrates_its_coverage(tmp_path):
     """A round is only recorded partial when a layer really fell short, not on phrasing."""
     f = tmp_path / "narrated.md"
-    f.write_text("# findings\n- x\n\nCOMPLETE: reviewed all 8 changed files in full\n")
+    f.write_text(
+        "# findings\n- x (src/a.py:3)\n\nCOMPLETE: reviewed all 8 changed files in full\n"
+    )
     assert (
         led(tmp_path, "classify-report", "--file", str(f)).stdout.strip() == "COMPLETE"
     )
+
+
+PLACEHOLDER = (
+    "No findings beyond those written to the landmine/hunter files.\n\nCOMPLETE\n"
+)
+
+
+def classify(tmp_path, name, text):
+    f = tmp_path / name
+    f.write_text(text)
+    return led(tmp_path, "classify-report", "--file", str(f)).stdout.strip()
+
+
+def test_findingless_complete_without_checked_is_a_stub(tmp_path):
+    """A COMPLETE file that reports nothing and names nothing it examined is a placeholder, not a pass."""
+    assert classify(tmp_path, "stub.md", PLACEHOLDER) == "STUB"
+    assert (
+        classify(tmp_path, "empty-checked.md", "No findings.\nChecked:\nCOMPLETE\n")
+        == "STUB"
+    )
+
+
+def test_findingless_complete_that_lists_what_it_checked_is_complete(tmp_path):
+    """Naming the files or paths a layer examined is what makes a no-findings report a real pass."""
+    single = PLACEHOLDER.replace(
+        "\n\n", "\nChecked: ledger.py _classify, await_layers poll_once\n\n"
+    )
+    listed = (
+        "No findings.\n\n**Checked:**\n- the retry path in `ledger.py`\n\nCOMPLETE\n"
+    )
+    assert classify(tmp_path, "bare.md", PLACEHOLDER) == "STUB"
+    assert classify(tmp_path, "single.md", single) == "COMPLETE"
+    assert classify(tmp_path, "listed.md", listed) == "COMPLETE"
+
+
+def test_report_with_findings_and_no_checked_line_stays_complete(tmp_path):
+    """A report carrying findings is never a stub, whether or not the parser can anchor them."""
+    reports = [
+        "### should-fix: retry drops the error (src/a.py:12)\n\nCOMPLETE\n",
+        "### should-fix: retry drops the error\n\nCOMPLETE\n",
+        "### blocker: runs as root (Dockerfile:3)\n\nCOMPLETE\n",
+        "- **should-fix:** Makefile:12 rebuilds on every call\n\nCOMPLETE\n",
+        "1. [landmine] lock leaks (ledger.py line 40)\n\nCOMPLETE\n",
+        "- 🟠 worth confirming: ledger.py::_classify skips PARTIAL\n\nCOMPLETE\n",
+        "# findings\n- x\n\nCOMPLETE: checked ledger.py and await_layers.py\n",
+    ]
+    for i, text in enumerate(reports):
+        assert classify(tmp_path, f"r{i}.md", text) == "COMPLETE", text
+
+
+def test_vague_checked_line_is_still_a_stub(tmp_path):
+    """A Checked section that names no file, path or backticked symbol is a placeholder."""
+    for i, rest in enumerate(
+        ["n/a", "everything", "all", "N/A.", "e.g. all files", "i.e. the lot, etc."]
+    ):
+        text = f"No findings.\nChecked: {rest}\nCOMPLETE\n"
+        assert classify(tmp_path, f"v{i}.md", text) == "STUB", rest
+    assert (
+        classify(tmp_path, "nofind.md", "- No blocker found.\nChecked: all\nCOMPLETE\n")
+        == "STUB"
+    )
+
+
+def test_findingless_partial_stays_partial(tmp_path):
+    """STUB only replaces COMPLETE; a layer that said it fell short keeps its reason."""
+    text = "No findings.\nPARTIAL: ran out of budget\n"
+    assert classify(tmp_path, "complete.md", "No findings.\nCOMPLETE\n") == "STUB"
+    assert classify(tmp_path, "partial.md", text) == "PARTIAL ran out of budget"

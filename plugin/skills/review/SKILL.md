@@ -179,7 +179,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    Do not spawn agents. Read <outdir>/CONTEXT-<n>.md and <outdir>/FACTS-<n>.md first. Cite every
    position as a repo-root-relative `path/from/repo/root.py:LINE`, never a
    shortened or absolute path. Report nothing under the context pack's
-   Excludes. Write your
+   Excludes. End the body with a `Checked:` line naming the files,
+   functions and paths you examined. Write your
    findings to <outdir>/REVIEW-<n>-<layer>.md as your final action; its
    last non-blank line must be exactly COMPLETE, or PARTIAL: <reason> -
    only PARTIAL carries a reason."
@@ -208,13 +209,17 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    live agents writing one `REVIEW-<n>-<layer>.md` race, and the surviving
    file is whichever finished last, not whichever is better.
    For each layer file run `ledger.py classify-report --file
-   <outdir>/REVIEW-<n>-<layer>.md`. Missing file or MALFORMED: under
+   <outdir>/REVIEW-<n>-<layer>.md`. Missing file, MALFORMED or STUB
+   (COMPLETE with no file:line citation, no severity-tagged finding line and
+   no `Checked:` line naming a file, path or backticked symbol): under
    `--inline`, rewrite it yourself once per `inline-mode.md`. Otherwise
    dispatch ONE fresh Agent for that layer (stop the original first) whose
    sole instruction is to write the missing findings file (same layer
    instructions, same output path, same terminator), then bound that wait
    with `await_layers.py <outdir> <n> <layer> 540 5`; if that also yields no
-   valid file, record the layer as PARTIAL and move on.
+   valid file, record the layer as PARTIAL and move on; a layer still STUB
+   is reported as not run, never listed under `Layers run`, and whatever
+   findings its file does hold still go through step 7.
    Record: `ledger.py round-end --repo <owner/repo> --pr <n> --sha <head>
    --complete` only when every layer that ran classifies as COMPLETE (all
    four, or `project` and `landmine` under `--skip-review`, which also passes
@@ -237,7 +242,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    every finding resting on it is unverified until you re-locate it in the
    real file or drop it. A wrong citation alone is not grounds to discard
    the finding. A `WARNING` that a layer cites no file:line is expected
-   when that layer reports no findings.
+   when that layer reports no findings and its `Checked:` line names what
+   it examined; otherwise note the layer as unanchored in the review body.
    The `l_test_shape` FACTS section lists changed tests that can pass
    without the behaviour they name; with `h_mutation`'s surviving mutants it
    covers both halves of a weak test, the production side and the test side.

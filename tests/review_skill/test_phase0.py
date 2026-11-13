@@ -662,3 +662,19 @@ def test_killed_guard_takes_phase0_down_and_restores_the_mutant(fixture_repo, tm
     proc.kill()
     proc.wait()
     assert _restored_within(mod_path, original, 15)
+
+
+def test_stop_group_does_not_resend_a_forwarded_sigterm(monkeypatch):
+    """After the guard forwarded a stop, cleanup only waits and kills; a second SIGTERM would interrupt the restore."""
+    guard = load("run_phase0_stop_group", "run_phase0.py")
+    sent = []
+    monkeypatch.setattr(guard, "_signal_group", lambda pid, signum: sent.append(signum))
+
+    def gone(pid, signum):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(guard.os, "killpg", gone)
+    guard._stop_group(12345, already_signalled=True)
+    assert sent == []
+    guard._stop_group(12345, already_signalled=False)
+    assert sent == [signal.SIGTERM]
