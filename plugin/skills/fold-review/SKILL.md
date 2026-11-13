@@ -1,7 +1,7 @@
 ---
 name: fold-review
 description: Use when PR review feedback needs to be folded back into fixes - "fold this review in", "address the PR feedback", "/helmsman-skills:fold-review <n>", or an existing review file's findings need to be implemented and pushed
-argument-hint: "<pr-number-or-link-or-file-path>... [--inline] [--skip-review]"
+argument-hint: "<pr-number-or-link-or-file-path>... [--inline] [--skip-review] [--post-replies]"
 allowed-tools: Bash, Read, Grep, Glob, Task, Write, Edit, Skill, Agent
 ---
 
@@ -20,6 +20,7 @@ problems, `fold-review` closes them out.
 /helmsman-skills:fold-review https://github.com/<owner>/<repo>/pull/12671
 /helmsman-skills:fold-review /path/to/REVIEW-PR-12671.md
 /helmsman-skills:fold-review 12671 --inline --skip-review
+/helmsman-skills:fold-review 12671 --post-replies
 ```
 
 ## Flags
@@ -31,6 +32,8 @@ problems, `fold-review` closes them out.
   it (its "In `fold-review`" section); it skips step 3 entirely and skips
   step 5's full tier unless a sensitive path is touched. Only load either file when the matching flag was
   actually passed.
+- `--post-replies` - the user's approval of step 7's thread replies and
+  resolutions for this run: post them without asking.
 
 **Stack mode.** When the input is several PRs, or a PR whose base is another
 open PR, read `stack-mode.md` (this skill's base dir) before step 1 and follow
@@ -53,7 +56,7 @@ review, gate, resolve threads - no approval checkpoint before push, this is a
 fold-in onto a PR the user explicitly asked to close out (or, in new-PR mode,
 its follow-up draft). The one exception is step 7's reply comments on findings this
 diff did not fix: a comment posted as the user needs their explicit approval
-of the body, which "close out this PR" does not grant.
+of the body, which "close out this PR" does not grant, but `--post-replies` does.
 
 ## Steps
 
@@ -189,6 +192,11 @@ reason, the same "no silent drops" rule this step already applies to review
 findings.
 
 ### 3. Review the spec
+
+**Trivial change** - the spec fixes exactly one finding, in one file, and
+that file matches neither step 5's sensitive-path list nor CI config
+(`.github/`, pipeline files): skip this step and report it as
+`skipped: trivial change`.
 
 Under `--skip-review`, follow `skip-review.md` (already read per Flags
 above) - this step is skipped entirely. Under `--inline`, follow
@@ -451,7 +459,8 @@ style-rewrite tool when the environment provides one. A finding with no thread b
 comment, or a local review file that was never posted to GitHub - has nothing to reply to,
 and its reasoning reaches the reader through step 8's report only.
 
-**These replies are the one write in this flow that needs approval.** Write
+**These replies are the one write in this flow that needs approval**, unless
+`--post-replies` was passed: then post every body without showing it first. Write
 each body to `<outdir>/reply-<thread-id>.md`, show the user every body next
 to its thread (path:line and the finding it answers), and post only the ones
 they explicitly approve. Post approved bodies one thread at a time, reading
@@ -502,6 +511,10 @@ was (body declined, no thread behind that finding, or the post failed),
 every unresolved thread or review body step 1 dropped for predating the
 review file, and the PR description lines updated or listed as stale.
 
+End with one line per step, each `ran` or `skipped: <reason>`: Phase 0,
+spec review, implement, diff review, citations check, gate, push, PR
+description, replies, thread resolution.
+
 ## Error handling
 
 - PR not found, or not mapped to a local checkout - fail with a clear
@@ -529,7 +542,7 @@ review file, and the PR description lines updated or listed as stale.
 - Thread-resolve failure (step 7) - reported, not fatal.
 - Reply body declined or unanswered (step 7) - the thread stays unresolved
   and unanswered, reported in step 8. Never post an unapproved body, and
-  never resolve the thread as a substitute.
+  never resolve the thread as a substitute; `--post-replies` approves every body.
 - Reply post failure (step 7) - reported, not fatal, same as a failed
   resolve.
 

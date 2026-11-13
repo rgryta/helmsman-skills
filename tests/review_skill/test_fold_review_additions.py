@@ -24,8 +24,12 @@ def test_fold_review_has_distillation_and_ledger_steps():
 FOLD = SCRIPTS.parents[1] / "fold-review" / "SKILL.md"
 
 
+def _flat_path(path):
+    return " ".join(path.read_text().split())
+
+
 def _flat():
-    return " ".join(FOLD.read_text().split())
+    return _flat_path(FOLD)
 
 
 def test_fold_review_writes_no_artifact_into_the_repo():
@@ -350,3 +354,67 @@ def test_outdated_threads_are_anchored_by_original_line():
     block = _flat()
     assert "isOutdated path line originalLine" in block
     assert "anchor it by `originalLine`" in block
+
+
+def test_post_flag_pre_approves_the_review_content():
+    """`--post` means post: the body and inline comments go out without another ask."""
+    assert (
+        "`--post` is the user's approval of the review body and its inline comments: post without asking."
+        in _flat_path(REVIEW)
+    )
+
+
+def test_post_replies_pre_approves_fold_replies_and_passes_through_the_pipeline():
+    """`--post-replies` is a listed fold flag that skips the reply approval, and feature-pipeline forwards it."""
+    fold, pipeline = _flat(), _flat_path(PIPELINE)
+    assert "[--post-replies]" in FOLD.read_text().split("---")[1]
+    assert (
+        "- `--post-replies` - the user's approval of step 7's thread replies and resolutions"
+        in fold
+    )
+    assert "unless `--post-replies` was passed" in fold
+    assert "[--post-replies]" in PIPELINE.read_text().split("---")[1]
+    assert "`--post-replies` passes through to every `fold-review` call" in pipeline
+
+
+def test_pipeline_never_holds_back_its_review_phase():
+    """Phase 4 starts after the last push without asking."""
+    assert (
+        "never hold it back for approval or offer it as an optional next step"
+        in _flat_path(PIPELINE)
+    )
+
+
+def test_final_reports_list_every_step_as_ran_or_skipped():
+    """Each skill's report names its steps so a skipped one is visible with its reason."""
+    for path, steps in (
+        (
+            REVIEW,
+            "Phase 0, project, hunter, edge, landmine, citations check, ledger, post",
+        ),
+        (
+            FOLD,
+            "Phase 0, spec review, implement, diff review, citations check, gate, push, PR description, replies, thread resolution",
+        ),
+        (
+            PIPELINE,
+            "Phase 0, spec split, spec review, implement, push, review, fold, validate",
+        ),
+    ):
+        text = _flat_path(path)
+        assert "`ran` or `skipped: <reason>`" in text, path
+        assert steps in text, path
+    assert "one line per step (per PR when reviewing a stack)" in _flat_path(REVIEW)
+
+
+def test_trivial_fold_skips_only_a_small_insensitive_spec_review():
+    """One finding in one non-sensitive, non-CI file may skip the spec review, and says so."""
+    step3 = _flat().split("### 3. Review the spec")[1].split("### 4.")[0]
+    for token in (
+        "exactly one finding",
+        "in one file",
+        "sensitive-path list",
+        "CI config",
+        "`skipped: trivial change`",
+    ):
+        assert token in step3, token
