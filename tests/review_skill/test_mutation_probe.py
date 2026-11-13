@@ -253,3 +253,75 @@ def test_probe_skips_when_the_runner_never_spawns(fixture_repo, tmp_path, monkey
     assert (
         fixture_repo / "pkg" / "mod.py"
     ).read_text() == "def check_guard(n):\n    return n > 10\n"
+
+
+def _repo_without_pyproject(tmp_path):
+    repo = tmp_path / "repo_no_pkg"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "loose").mkdir()
+    (repo / "loose" / "mod.py").write_text("def check_guard(n):\n    return n > 1\n")
+    commit_all(repo, "base")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (repo / "loose" / "mod.py").write_text("def check_guard(n):\n    return n > 10\n")
+    commit_all(repo, "change")
+    return repo
+
+
+def test_no_owning_package_is_skipped_not_uncovered(tmp_path, monkeypatch):
+    """Without a pyproject.toml there is no test dir, which says nothing about coverage."""
+    repo = _repo_without_pyproject(tmp_path)
+    mod = load("h_mutation", "checks/h_mutation.py")
+    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: pytest.fail("ran tests"))
+    out = mod.run(str(repo), "origin/main")
+    assert out.startswith("SKIPPED:"), out
+    assert "UNCOVERED" not in out
+    assert "loose/mod.py has no owning package" in out
+
+
+def test_env_sync_time_counts_against_the_budget(fixture_repo, monkeypatch):
+    """A slow sync leaves too little budget for a test run, so no mutant is started."""
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "def check_guard(n):\n    return n > 10\n"
+    )
+    commit_all(fixture_repo)
+    mod = load("h_mutation", "checks/h_mutation.py")
+    clock = [0.0]
+
+    class FakeTime:
+        @staticmethod
+        def monotonic():
+            return clock[0]
+
+    def slow_sync(worktree, timeout):
+        clock[0] = mod.BUDGET_S - 5
+        return None, False, "synced"
+
+    monkeypatch.setattr(mod, "time", FakeTime)
+    monkeypatch.setattr(mod._env, "ensure_project_env", slow_sync)
+    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: pytest.fail("ran tests"))
+    out = mod.run(str(fixture_repo), "origin/main")
+    assert out.startswith("SKIPPED:"), out
+    assert "budget spent" in out
+
+
+def test_termination_keeps_already_survived_mutants(fixture_repo, monkeypatch):
+    """A SIGTERM mid-run must still report the survivors found before it."""
+    mod_path = fixture_repo / "pkg" / "mod.py"
+    original = "def check_guard(n):\n    return n > 10 and n < 20\n"
+    mod_path.write_text(original)
+    commit_all(fixture_repo)
+    mod = load("h_mutation", "checks/h_mutation.py")
+    codes = iter([0])
+
+    def run_tests(*a):
+        code = next(codes, None)
+        if code is None:
+            raise mod._Terminated("signal 15 received, restored and exiting")
+        return code
+
+    monkeypatch.setattr(mod, "_run_pkg_tests", run_tests)
+    out = mod.run(str(fixture_repo), "origin/main")
+    assert out.startswith("FINDINGS: 1/1 mutants survived"), out
+    assert "SURVIVED" in out and "results are partial" in out
+    assert mod_path.read_text() == original

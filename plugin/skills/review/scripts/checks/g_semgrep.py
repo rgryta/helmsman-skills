@@ -106,7 +106,7 @@ def _render(payload, code, files, scope, local_ids, note=None, added_by_path=Non
         parts = [f"FINDINGS: {scope}"]
         # capped per group, not before the split: a shared cap spends itself on
         # whichever group sorts first and silently drops the other entirely
-        for key, title, note in (
+        for key, title, group_note in (
             ("new", "### added by this diff", None),
             ("unknown", "### provenance unknown", _UNKNOWN_NOTE),
             ("old", "### not on a line this diff added", _NOT_ADDED_NOTE),
@@ -118,8 +118,8 @@ def _render(payload, code, files, scope, local_ids, note=None, added_by_path=Non
             parts.extend(rows[:MAX_PER_GROUP])
             if len(rows) > MAX_PER_GROUP:
                 parts.append(f"- (+{len(rows) - MAX_PER_GROUP} more not shown)")
-            if note:
-                parts.append(note)
+            if group_note:
+                parts.append(group_note)
         msg = "\n".join(parts)
     if note:
         msg += f"\n- NOTE: {note}"

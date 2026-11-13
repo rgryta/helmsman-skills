@@ -26,7 +26,7 @@ def test_import_closure_unmappable_import_is_unverified_not_finding(fixture_repo
     out = load("f_import_closure", "checks/f_import_closure.py").run(
         str(fixture_repo), "origin/main"
     )
-    assert out.startswith("FINDINGS:")
+    assert out.startswith("SKIPPED: 1 import(s) could not be verified")
     assert "could not confidently map" in out
     assert "not declared in its pyproject.toml" not in out
     assert "interpreter running Phase 0, not the reviewed repo's environment" in out
@@ -202,3 +202,45 @@ def test_import_closure_treats_a_sibling_module_as_local(fixture_repo):
         str(fixture_repo), "origin/main"
     )
     assert out.startswith("OK:") and "helper" not in out
+
+
+def test_import_closure_maps_imports_with_the_reviewed_repos_env(fixture_repo):
+    """A dependency installed only in the repo's own venv resolves, instead of reading as unverified."""
+    (fixture_repo / "pkg" / "pyproject.toml").write_text(
+        '[project]\nname = "pkg"\nversion = "0"\ndependencies = ["zzz-dist"]\n'
+    )
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "import zzz_only_in_repo_env\n\n\ndef f():\n    return 1\n"
+    )
+    commit_all(fixture_repo)
+    venv_bin = fixture_repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_text('#!/bin/sh\necho \'{"zzz_only_in_repo_env": ["zzz-dist"]}\'\n')
+    python.chmod(0o755)
+    out = load("f_import_closure", "checks/f_import_closure.py").run(
+        str(fixture_repo), "origin/main"
+    )
+    assert out.startswith("OK: 1 third-party import"), out
+    assert "the reviewed repo's env" in out
+
+
+def test_import_closure_ignores_an_unsynced_repo_env(fixture_repo, monkeypatch):
+    """A repo venv whose sync is not verified is not trusted for import mapping."""
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "import zzz_only_in_repo_env\n\n\ndef f():\n    return 1\n"
+    )
+    commit_all(fixture_repo)
+    venv_bin = fixture_repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    python = venv_bin / "python"
+    python.write_text('#!/bin/sh\necho \'{"zzz_only_in_repo_env": ["zzz-dist"]}\'\n')
+    python.chmod(0o755)
+    mod = load("f_import_closure", "checks/f_import_closure.py")
+    monkeypatch.setattr(
+        mod._env,
+        "ensure_project_env",
+        lambda wt: (str(python), False, "uv sync failed"),
+    )
+    out = mod.run(str(fixture_repo), "origin/main")
+    assert "interpreter running Phase 0" in out, out

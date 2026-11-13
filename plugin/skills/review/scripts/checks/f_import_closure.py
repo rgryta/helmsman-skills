@@ -1,4 +1,6 @@
 import ast
+import importlib.metadata
+import json
 import re
 import subprocess
 import sys
@@ -8,8 +10,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import _diff  # noqa: E402
+import _env  # noqa: E402
 
 _REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+_DIST_MAP_PROBE = (
+    "import importlib.metadata, json; "
+    "print(json.dumps(importlib.metadata.packages_distributions()))"
+)
 
 
 def _local_roots(worktree):
@@ -93,6 +100,26 @@ def _resolve(mod, declared, dist_map):
     return "unverified"
 
 
+def _dist_map(worktree):
+    """Module-to-distribution map from the reviewed repo's env, else from this interpreter."""
+    python, trusted, _ = _env.ensure_project_env(worktree)
+    if python and trusted:
+        code, out = _diff.run_cmd(
+            [python, "-c", _DIST_MAP_PROBE], cwd=worktree, timeout=60
+        )
+        if code == 0:
+            try:
+                return json.loads(out), "the reviewed repo's env"
+            except ValueError:
+                pass
+    try:
+        return importlib.metadata.packages_distributions(), (
+            "the interpreter running Phase 0, not the reviewed repo's environment"
+        )
+    except Exception:
+        return {}, "nothing - no env could be read"
+
+
 def _deferred_imports(d, worktree, base, files):
     added_map = d.added_lines_by_path(worktree, base, files)
     """Imports the diff added inside a function body.
@@ -139,7 +166,7 @@ def run(worktree, base):
     placement = ""
     if deferred:
         placement = (
-            "\n\nDeferred imports this diff ADDED (house style is module level):\n"
+            "\n\nDeferred imports this diff ADDED (inside a function body):\n"
             + "\n".join(deferred)
             + "\n- each is a CANDIDATE, not a defect: a deferred import is right "
             "when it breaks a cycle or must run after a fixture patches config, "
@@ -183,12 +210,7 @@ def run(worktree, base):
     total = len(units)
     probed = units[:20]
 
-    try:
-        import importlib.metadata
-
-        dist_map = importlib.metadata.packages_distributions()
-    except Exception:
-        dist_map = {}
+    dist_map, resolved_with = _dist_map(worktree)
 
     declared_cache = {}
     findings, unverified, ok_count = [], [], 0
@@ -232,25 +254,25 @@ def run(worktree, base):
         "SCOPE: compared against each changed file's owning package's pyproject.toml "
         "declared dependencies (dependencies/optional-dependencies/dependency-groups); "
         "not verified against which of those groups the deployment image actually "
-        "installs; module-to-distribution name mapping is resolved using the "
-        "interpreter running Phase 0, not the reviewed repo's environment, so an "
-        "import it cannot map is reported UNVERIFIED rather than as a finding"
+        f"installs; module-to-distribution name mapping is resolved using {resolved_with}, "
+        "so an import it cannot map is reported UNVERIFIED rather than as a finding"
     )
-    if findings or unverified:
-        return (
-            "FINDINGS: import closure vs declared dependencies\n"
-            + "\n".join(findings + unverified)
-            + note
-            + f"\n- {scope}"
-            + placement
-        )
-    head = (
-        f"OK: {ok_count} third-party import(s) declared in the owning package's "
-        "pyproject.toml"
-    )
-    if deferred:
+    if findings:
+        head = "FINDINGS: import closure vs declared dependencies"
+    elif deferred:
         head = f"FINDINGS: {len(deferred)} deferred import(s) added by this diff"
-    return head + note + f"\n- {scope}" + placement
+    elif unverified:
+        head = (
+            f"SKIPPED: {len(unverified)} import(s) could not be verified, "
+            f"{ok_count} declared in the owning package's pyproject.toml"
+        )
+    else:
+        head = (
+            f"OK: {ok_count} third-party import(s) declared in the owning package's "
+            "pyproject.toml"
+        )
+    body = "".join(f"\n{line}" for line in findings + unverified)
+    return head + body + note + f"\n- {scope}" + placement
 
 
 if __name__ == "__main__":
