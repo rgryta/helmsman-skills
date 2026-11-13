@@ -34,37 +34,44 @@ verdicts are approve-with-comments or comment-only - never REQUEST_CHANGES.
 
 ## post
 
-`position` = lines from the file's FIRST `@@` hunk header in the PR diff
-(inclusive, from 1) down to the target line.
+Anchor with `line` (the line number in the new file) + `side: "RIGHT"`; for
+a range add `start_line` + `start_side: "RIGHT"`. `line` (and `start_line`)
+must sit in the same hunk of this file's block - between its `diff --git`
+line and the next one. Never use the legacy `position` field.
 
 ```bash
-gh pr diff <PR> > /tmp/pr<PR>.diff
-grep -n "^diff --git" /tmp/pr<PR>.diff | grep "<file>"     # N = diff --git line; first @@ ~ N+4, verify with awk
-grep -n "<code_fragment>" /tmp/pr<PR>.diff                  # target absolute line
-# position = target_line - first_@@_line + 1
+diff=$(mktemp)
+gh pr diff <PR> > "$diff"
+grep -n "^diff --git" "$diff" | grep "<file>"                # file's block
+grep -n "^@@" "$diff"                                       # +start,count; use only hunks inside the file's block
 gh pr view <PR> --json headRefOid --jq .headRefOid          # commit_id
 
-curl -s -X POST -H "Authorization: Bearer $(gh auth token)" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/<OWNER>/<REPO>/pulls/<PR>/comments" -d @- <<'EOF'
-{"body": "<BODY>", "commit_id": "<HEAD_SHA>", "path": "<PATH>", "position": <POSITION>}
+payload=$(mktemp)
+cat > "$payload" <<'EOF'
+{"body": "<BODY>", "commit_id": "<HEAD_SHA>", "path": "<PATH>", "line": <LINE>, "side": "RIGHT"}
 EOF
+jq . "$payload" >/dev/null && gh api repos/<OWNER>/<REPO>/pulls/<PR>/comments --input "$payload"
 ```
 
-The comment joins the user's existing pending review or creates one (a second
-pending review cannot coexist - check for one first). Return the `html_url`.
+This single-comment POST publishes immediately - it does not join a pending
+review. Return the `html_url`.
 
-**Off-diff branch:** if the file has no hunk in the diff (`grep` finds no
-block), do NOT compute a position and never force an inline anchor - the
-finding goes in a review body or a general PR comment instead.
+**Off-diff branch:** if the target line is in no hunk, never force an inline
+anchor - the finding goes in a review body or a general PR comment instead.
 
-**Two anchor models, mutually exclusive:** single-comment POST uses
-`position`; the batched-review POST (`.../pulls/<PR>/reviews`, payload via
-`--input <file>`: `{commit_id, event, body, comments: [{path, line,
-side: "RIGHT", body}]}`) uses `line`+`side` on RIGHT-side diff lines. A mixed
-request (some findings on-diff, some off) must use the batched call: on-diff
-in `comments[]`, off-diff in `body`, and `event: COMMENT` unless the user
-explicitly asked for a verdict.
+**Several findings at once:** use the batched review POST
+(`.../pulls/<PR>/reviews`, `--input <file>`: `{commit_id, event, body,
+comments: [{path, line, side: "RIGHT", body}]}`, ranges add `start_line` +
+`start_side`). On-diff findings go in `comments[]`, off-diff in `body`, and
+`event: COMMENT` unless the user explicitly asked for a verdict. If you
+already have a pending review (`gh api .../pulls/<PR>/reviews`,
+`state == PENDING`, your login), stop and tell the user - never submit it.
+
+Validate every payload with `jq .` before posting. If a post is interrupted
+or its result unclear, list your own recent comments
+(`gh api repos/<OWNER>/<REPO>/pulls/<PR>/comments --paginate`, filter by
+your login) first. If the comment is there, use it and do not retry.
+Retry only if it is missing. Delete only when two copies really exist.
 
 ## update
 
@@ -119,7 +126,7 @@ by dismissing.
 
 ## Common mistakes
 
-- Probing with a test comment to find the position - compute offline.
+- Probing with a test comment to find the anchor - compute offline.
 - Dismissing a review to unblock a merge - it silently revokes approval.
 - Resolving from the changelog instead of verifying each thread at HEAD.
 - Treating `isOutdated` as addressed.
