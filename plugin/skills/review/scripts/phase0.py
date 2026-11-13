@@ -16,6 +16,8 @@ HEAVY = {"c_pytest", "h_mutation"}
 SKIP_ENV = "HELMSMAN_PHASE0_SKIP"
 CLI_ENV = "HELMSMAN_CLI"
 MANIFEST = HERE.parents[2] / ".claude-plugin" / "plugin.json"
+FETCH = HERE / "fetch_cli.py"
+FETCH_TIMEOUT_S = 30
 LOCK_PATH = Path(
     os.environ.get("HELMSMAN_PHASE0_LOCK", Path.home() / ".helmsman" / "phase0.lock")
 )
@@ -190,7 +192,21 @@ def _cli_path():
         return None
     exe = "helmsman.exe" if os.name == "nt" else "helmsman"
     path = Path.home() / ".helmsman" / "bin" / version / exe
-    return path if path.is_file() else None
+    return path if path.is_file() else _fetch_cli()
+
+
+def _fetch_cli():
+    try:
+        r = subprocess.run(
+            [sys.executable, str(FETCH)],
+            stdout=subprocess.PIPE,
+            text=True,
+            timeout=FETCH_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    path = r.stdout.strip()
+    return Path(path) if r.returncode == 0 and path else None
 
 
 def _cli_routes():
