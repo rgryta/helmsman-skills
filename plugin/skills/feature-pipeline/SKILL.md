@@ -1,7 +1,7 @@
 ---
 name: feature-pipeline
 description: Use when shipping a non-trivial feature - work that spans multiple PRs, needs design before code, or arrives as "close the gap of X, Y, Z" / "build out ..." / "each piece its own PR". Not for one-line fixes.
-argument-hint: "[feature/goal description] [--inline] [--skip-review]"
+argument-hint: "[feature/goal description] [--inline] [--skip-review] [--post-replies]"
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, Task, Agent, Skill, WebSearch, WebFetch
 ---
 
@@ -13,7 +13,8 @@ if installed, review, fold-review, landmine-review) plus the repo-specific mecha
 and gotchas that make a multi-PR effort actually land.
 
 `--inline` and `--skip-review` pass through unchanged to every
-`/helmsman-skills:review` and `/helmsman-skills:fold-review` call in Phase 4.
+`/helmsman-skills:review` and `/helmsman-skills:fold-review` call in Phase 4;
+`--post-replies` passes through to every `fold-review` call.
 
 Run the phases in order. Each phase has a gate: do not start the next until the
 current one's output exists. Track phases with the task tools.
@@ -26,6 +27,9 @@ as each is committed (Phase 3), then review them (Phase 4) — there is no "read
 gate and no waiting. Do NOT stop half-built to ask which option the user prefers; build the full
 chain first. After pushing, report per branch: a one-line summary, the diff stat, the
 gate results (the project's lint/type/test gates), and (if any PRs stack) the merge order.
+
+Phase 4 is part of the run: start it right after the last push, never hold it
+back for approval or offer it as an optional next step.
 
 What still needs an **explicit ask**: marking a PR **ready for review**, **merging**, or
 any non-draft outward action (posting comments, flipping prod flags). Those are never
@@ -271,6 +275,12 @@ A few conventions that generalize across repos regardless of toolchain:
   not code). Tickets get renamed, closed, and renumbered; code that cites
   one rots the moment it does. Explain the WHY directly in the comment
   instead of pointing at a ticket for it.
+
+## Final report
+
+End with one line per phase (and per PR for Phase 4's review and fold), each
+`ran` or `skipped: <reason>`: Phase 0, spec split, spec review, implement,
+push, review, fold, validate.
 
 ## Notes
 - Pipe long command output to files; don't parse inline.

@@ -216,7 +216,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
 ## --post mode
 
 After step 8: only the orchestrator posts; subagents never touch GitHub
-write APIs. Run the comment-density/anchor pre-checks BEFORE generating the
+write APIs. `--post` is the user's approval of the review body and its inline
+comments: post without asking. Run the comment-density/anchor pre-checks BEFORE generating the
 payload. Compute anchors against the PR head commit; inline comments only on
 RIGHT-side diff lines. Apply `## Verdict` below. The posted body carries
 every Blocker and Should-fix the file holds, each with its severity word - an
@@ -228,6 +229,12 @@ mechanics (`--input <file>`). Batch any multi-PR thread lookups into a single
 `gh api graphql` call with aliases - never a sequential per-PR loop. Verify
 anchors landed; on an ambiguous POST, list existing reviews before any
 retry.
+
+## Final report
+
+End the reply with one line per step (per PR when reviewing a stack), each
+`ran` or `skipped: <reason>`:
+Phase 0, project, hunter, edge, landmine, citations check, ledger, post.
 
 ## Severity
 
