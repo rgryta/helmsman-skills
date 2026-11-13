@@ -147,10 +147,10 @@ def run(worktree, base):
 
     # surviving-line probes run to completion before any literal probe, so the
     # weaker signal can never starve the stronger one out of the shared budget
-    for path, (removed, added) in pending.items():
-        # a line the diff also re-adds was moved, not abandoned, so its surviving
-        # copy is the same code in a new place rather than an untouched twin
-        moved = {t.strip() for t in added}
+    # a line the diff also re-adds, in any file, was moved, not abandoned, so its
+    # surviving copy is the same code in a new place rather than an untouched twin
+    moved = {t.strip() for _, added in pending.values() for t in added}
+    for path, (removed, _) in pending.items():
         for text in _distinctive_lines(removed):
             if _full(blocks, probes) or per_file.get(path, 0) >= MAX_ITEMS_PER_FILE:
                 break

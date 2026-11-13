@@ -24,7 +24,7 @@ rules:
           regex: ^(Exception|BaseException)$
       - metavariable-regex:
           metavariable: $F
-          regex: .*(guard|enforce|anonym|redact|mask|verify).*
+          regex: ^(.*[._])?(guard|enforce|anonym|redact|mask|verify)
       - pattern-not: |
           try:
               ...
@@ -61,3 +61,17 @@ rules:
           except $EXC as $E:
               ...
               raise $X from $Y
+      - pattern-not: |
+          try:
+              ...
+              return True
+          except $EXC:
+              ...
+              return False
+      - pattern-not: |
+          try:
+              ...
+              return True
+          except $EXC as $E:
+              ...
+              return False

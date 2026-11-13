@@ -10,7 +10,6 @@ import _diff  # noqa: E402
 MAX_BLOCKS = 12
 MAX_REFERENTS_PER_CLAIM = 4
 MAX_HITS_SHOWN = 3
-WINDOW = 0
 BACKTICKED = re.compile(r"`([^`\n]{2,60})`")
 # \b never matches before a leading underscore, which would hide every private helper
 NOT_WORD = r"(?<![A-Za-z0-9_])"

@@ -98,12 +98,95 @@ def test_insertion_reports_what_runs_before_and_after_it(repo):
     assert "runs AFTER the change" in out
 
 
+REBOUND = """def handler(req):
+    req = normalise(req)
+    audit(req)
+    result = engine(req)
+    return result
+"""
+
+REBOUND_WITH_GATE = """def handler(req):
+    req = normalise(req)
+    audit(req)
+    if blocked(req):
+        return refuse()
+    result = engine(req)
+    return result
+"""
+
+TWO_FUNCTIONS = """def load(path):
+    out = open(path).read()
+    return out
+
+
+def save(out):
+    write(out)
+"""
+
+TWO_FUNCTIONS_GUARDED = """def load(path):
+    out = open(path).read()
+    return out
+
+
+def save(out):
+    if not out:
+        return
+    write(out)
+"""
+
+
 def test_other_bindings_of_a_read_name_are_reported(repo):
-    """A name the changed lines read, bound elsewhere in the file, is flagged as another shape."""
-    base = commit_two(repo, BASE, WITH_GATE)
+    """A name the changed lines read, bound elsewhere in the same function, is flagged as another shape."""
+    base = commit_two(repo, REBOUND, REBOUND_WITH_GATE)
     out = check().run(str(repo), base)
     assert "other bindings of names the changed lines read" in out
-    assert "req@" in out
+    assert "req@2" in out
+
+
+def test_code_in_other_functions_is_not_reported_around_the_change(repo):
+    """Calls and bindings from a different function never appear as running around, or reaching, the change."""
+    base = commit_two(repo, TWO_FUNCTIONS, TWO_FUNCTIONS_GUARDED)
+    out = check().run(str(repo), base)
+    assert "write@" in out
+    assert "open@" not in out
+    assert "read@" not in out
+    assert "out@2" not in out
+
+
+ADJACENT = """def load(path):
+    data = open(path).read()
+    return data
+
+
+def save(out):
+    write(out)
+    flush(out)
+    notify(out)
+"""
+
+ADJACENT_CHANGED = """def load(path):
+    data = open(path).read()
+    log(data)
+    return data
+
+
+def save(out):
+    if not out:
+        return
+    write(out)
+    flush(out)
+    notify(out)
+"""
+
+
+def test_nearby_changes_in_two_functions_are_reported_separately(repo):
+    """Changed lines close together but in different functions are never merged into one hunk."""
+    base = commit_two(repo, ADJACENT, ADJACENT_CHANGED)
+    out = check().run(str(repo), base)
+    save_block = next(b for b in out.split("\n\n") if "in `save`" in b)
+    assert "write@" in save_block
+    assert "notify@" in save_block
+    assert "open@" not in save_block
 
 
 def test_test_files_are_excluded(repo):

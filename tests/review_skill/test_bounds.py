@@ -63,3 +63,21 @@ def test_a_clamp_the_diff_did_not_add_is_not_reported(repo):
 def test_unparseable_file_does_not_break_the_check(repo):
     out = run_on(repo, "def call(timeout:\n")
     assert out.startswith("OK:")
+
+
+def test_a_file_with_unknown_diff_provenance_is_skipped(repo, monkeypatch):
+    """When the diff cannot say which lines are new, the file is reported as skipped, never as a clean OK."""
+    m = check()
+    monkeypatch.setattr(
+        m._diff, "added_lines_by_path", lambda w, b, paths: {p: None for p in paths}
+    )
+    seed = repo / "pkg" / "mod.py"
+    seed.parent.mkdir(parents=True)
+    seed.write_text("def seeded():\n    return 1\n")
+    commit_all(repo, "base")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    seed.write_text("def call(timeout):\n    return run(min(30, timeout))\n")
+    commit_all(repo, "change")
+    out = m.run(str(repo), "origin/main")
+    assert "SKIPPED: line provenance unknown for 1 file(s)" in out
+    assert not out.startswith("OK:")

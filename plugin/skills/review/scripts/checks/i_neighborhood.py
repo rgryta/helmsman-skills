@@ -18,15 +18,19 @@ TEST_PATH = re.compile(r"(^|/)(tests?|conftest)(/|\.py$)|(^|/)test_[^/]*\.py$")
 _SCOPE_NOTE = (
     "scope: non-test changed python files, insertions into existing functions "
     "first (a wholly new function has no execution-order neighbours); calls are those "
-    f"within {WINDOW} lines of a changed hunk, bindings are other assignments to "
-    "names the changed lines read"
+    f"in the enclosing function within {WINDOW} lines of a changed hunk, bindings are "
+    "other assignments in that function to names the changed lines read"
 )
 
 
-def _merge(spans):
+def _merge(spans, tree):
     out = []
     for start, end in sorted(spans):
-        if out and start <= out[-1][1] + WINDOW // 2:
+        if (
+            out
+            and start <= out[-1][1] + WINDOW // 2
+            and _enclosing(tree, start) is _enclosing(tree, out[-1][0])
+        ):
             out[-1] = (out[-1][0], max(out[-1][1], end))
         else:
             out.append((start, end))
@@ -140,7 +144,7 @@ def _hunk_block(d, worktree, path, tree, spans, span, before, after):
             "runs AFTER the change (still runs unless the change returns first): "
             + ", ".join(f"{n}@{ln}" for ln, n in after)
         )
-    reb = _rebinds(tree, _read_names(tree, start, end), spans)
+    reb = _rebinds(fn or tree, _read_names(tree, start, end), spans)
     if reb:
         shown = reb[:MAX_REBINDS]
         body.append(
@@ -182,16 +186,16 @@ def run(worktree, base):
     for path in files:
         if not Path(worktree, path).exists():
             continue
-        spans = _merge([(n, n) for n in sorted(added[path] or ())])
-        if not spans:
+        if not added[path]:
             continue
         try:
             tree = ast.parse(Path(worktree, path).read_text())
         except (OSError, SyntaxError) as e:
             blocks.append(f"### {path}\nSKIPPED: unparseable ({type(e).__name__})")
             continue
+        spans = _merge([(n, n) for n in sorted(added[path])], tree)
         for span in spans:
-            before, after = _window_calls(tree, *span)
+            before, after = _window_calls(_enclosing(tree, span[0]) or tree, *span)
             candidates.append(
                 (
                     _is_insertion(tree, span),
