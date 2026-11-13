@@ -2,8 +2,12 @@
 pub type Check = fn(worktree: &str, base: &str) -> i32;
 
 mod d_comment_density;
+mod j_siblings;
 
-pub const REGISTRY: &[(&str, Check)] = &[("d_comment_density", d_comment_density::run)];
+pub const REGISTRY: &[(&str, Check)] = &[
+    ("d_comment_density", d_comment_density::run),
+    ("j_siblings", j_siblings::run),
+];
 
 pub fn find(name: &str) -> Option<Check> {
     REGISTRY.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
