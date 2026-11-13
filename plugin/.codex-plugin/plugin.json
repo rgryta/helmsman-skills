@@ -5,6 +5,7 @@
   "author": { "name": "Radosław Gryta", "url": "https://github.com/rgryta" },
   "homepage": "https://github.com/rgryta/helmsman-skills",
   "repository": "https://github.com/rgryta/helmsman-skills",
+  "license": "MIT",
   "keywords": ["code-review", "git", "github", "ci"],
   "skills": "./skills/",
   "interface": {

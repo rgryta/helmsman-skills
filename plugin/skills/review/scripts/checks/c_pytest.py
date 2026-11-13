@@ -47,19 +47,9 @@ def _infra_kind(out):
     return None
 
 
-def _owning_pkg(root, path):
-    p = path.parent
-    while True:
-        if (p / "pyproject.toml").exists():
-            return p
-        if p == root or p == p.parent:
-            return None
-        p = p.parent
-
-
 def _packages(worktree, files):
     root = Path(worktree)
-    owners = (_owning_pkg(root, Path(worktree, f)) for f in files)
+    owners = (_diff.owning_pkg(root, Path(worktree, f)) for f in files)
     return sorted({p for p in owners if p is not None})
 
 
@@ -105,7 +95,7 @@ def _selection(worktree, files):
     by_pkg, touched, unmapped = {}, {}, []
     for f in files:
         path = Path(worktree, f)
-        pkg = _owning_pkg(root, path)
+        pkg = _diff.owning_pkg(root, path)
         if pkg is None:
             continue
         touched[pkg] = touched.get(pkg, 0) + 1
