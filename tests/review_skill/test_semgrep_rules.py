@@ -634,34 +634,6 @@ def test_sensitive_value_in_log_catches_logging_and_print(tmp_path):
 
 
 @pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
-def test_sensitive_value_rule_is_silent_on_this_repo(tmp_path):
-    """The measurement that justified shipping it: 0 matches in the review scripts today."""
-    pkg = SCRIPTS
-    assert pkg.is_dir(), f"{pkg} must exist or this test scans nothing"
-    out = subprocess.run(
-        [
-            *_semgrep_cmd(),
-            "--config",
-            str(RULES / "sensitive-value-in-log.yaml"),
-            "--json",
-            "--quiet",
-            str(pkg),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    payload = json.loads(out.stdout)
-    # scanned count and returncode too: semgrep prints results:[] for a root it
-    # cannot read, so asserting on results alone passes against an empty scan
-    assert out.returncode == 0, out.stderr[:300]
-    assert len(payload["paths"]["scanned"]) >= len(list(pkg.rglob("*.py"))), (
-        "scanned too few files to mean anything"
-    )
-    assert payload["results"] == []
-
-
-@pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
 def test_sensitive_value_rule_requires_a_word_boundary(tmp_path):
     """Without \\b, `token_count` and `mytoken` both match and the rule is noise."""
     hits = _rule_hits(

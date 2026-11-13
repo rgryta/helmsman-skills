@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 CHECK_BUDGET_S = int(os.environ.get("HELMSMAN_PHASE0_CHECK_S", "240")) - 20
 
@@ -55,6 +56,23 @@ def run_cmd(args, cwd, timeout):
         raise
     out = stdout.strip()
     return proc.returncode, out if out else stderr.strip()
+
+
+def owning_pkg(root, path):
+    p = path.parent
+    while True:
+        if (p / "pyproject.toml").exists():
+            return p
+        if p == root or p == p.parent:
+            return None
+        p = p.parent
+
+
+def is_test_path(f):
+    p = Path(f)
+    if p.name.startswith("test_") or p.name.endswith("_test.py"):
+        return True
+    return "tests" in p.parts
 
 
 def changed_py_files(worktree, base):

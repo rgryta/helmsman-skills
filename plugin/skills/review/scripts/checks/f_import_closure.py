@@ -46,17 +46,6 @@ def _top_imports(path):
     return mods
 
 
-def _owning_pkg(root, path):
-    p = path.parent
-    while True:
-        if (p / "pyproject.toml").exists():
-            return p
-        if p == root or p == p.parent:
-            break
-        p = p.parent
-    return None
-
-
 def _normalize(name):
     return re.sub(r"[-_.]+", "-", name).lower()
 
@@ -121,13 +110,13 @@ def _dist_map(worktree):
 
 
 def _deferred_imports(d, worktree, base, files):
-    added_map = d.added_lines_by_path(worktree, base, files)
     """Imports the diff added inside a function body.
 
     A deferred import is sometimes load-bearing - breaking a cycle, or importing
     after a fixture has patched config - so these are candidates to justify, not
     defects. Scoped to added lines because a repo can carry many deliberate ones.
     """
+    added_map = d.added_lines_by_path(worktree, base, files)
     out = []
     for path in files:
         full = Path(worktree, path)
@@ -189,7 +178,7 @@ def run(worktree, base):
         )
         if not mods:
             continue
-        pkg = _owning_pkg(root, path)
+        pkg = _diff.owning_pkg(root, path)
         if pkg is None:
             orphans |= mods
         else:

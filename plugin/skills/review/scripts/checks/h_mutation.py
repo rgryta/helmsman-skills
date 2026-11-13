@@ -44,25 +44,6 @@ def _install_signal_handlers():
         pass
 
 
-def _is_test_path(f):
-    p = Path(f)
-    if p.name.startswith("test_") or p.name.endswith("_test.py"):
-        return True
-    return "tests" in p.parts
-
-
-def _pkg_dir(worktree, path):
-    root = Path(worktree)
-    p = path.parent
-    while True:
-        if (p / "pyproject.toml").exists():
-            return p
-        if p == root or p == p.parent:
-            break
-        p = p.parent
-    return None
-
-
 def _mutants(src):
     tree = ast.parse(src)
     lines = src.splitlines(keepends=True)
@@ -110,7 +91,7 @@ def run(worktree, base):
     files = _diff.changed_py_files(worktree, base)
     if not files:
         return "OK: no python changes"
-    prod_files = [f for f in files if not _is_test_path(f)]
+    prod_files = [f for f in files if not _diff.is_test_path(f)]
     if not prod_files:
         return "OK: no production files changed (only test files) - nothing to probe"
     start = time.monotonic()
@@ -125,7 +106,7 @@ def run(worktree, base):
                 muts = _mutants(src)
             except SyntaxError:
                 continue
-            pkg_dir = _pkg_dir(worktree, path)
+            pkg_dir = _diff.owning_pkg(Path(worktree), path)
             if muts and pkg_dir is None:
                 no_pkg.append(f)
                 continue

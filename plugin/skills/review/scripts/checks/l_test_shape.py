@@ -23,13 +23,6 @@ _LEAD = (
 )
 
 
-def _is_test_path(f):
-    p = Path(f)
-    if p.name.startswith("test_") or p.name.endswith("_test.py"):
-        return True
-    return "tests" in p.parts
-
-
 def _overlaps(spans, lo, hi):
     return any(a <= hi and lo <= b for a, b in spans)
 
@@ -93,10 +86,7 @@ def _reads_ambient_env(fn):
     for n in ast.walk(fn):
         if isinstance(n, ast.Call) and _call_name(n) in controlled:
             return False
-    args = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
-    return "monkeypatch" not in args or not any(
-        isinstance(n, ast.Call) and _call_name(n) in controlled for n in ast.walk(fn)
-    )
+    return True
 
 
 def _unnamed_caplog_level(fn):
@@ -143,7 +133,7 @@ def shapes(fn):
 
 
 def run(worktree, base):
-    files = [f for f in _diff.changed_py_files(worktree, base) if _is_test_path(f)]
+    files = [f for f in _diff.changed_py_files(worktree, base) if _diff.is_test_path(f)]
     if not files:
         return f"OK: no changed python test files ({_SCOPE_NOTE})"
     blocks = []
