@@ -1,7 +1,7 @@
 ---
 name: review
 description: Use when a GitHub PR (or a stack of PRs) needs a thorough review - "review this PR", "/helmsman-skills:review <n>", "run a fresh review round" - including when the result should be posted to the PR ("auto-review", "review and post", --post)
-argument-hint: "[pr-numbers-or-links...] [--post] [--inline] [--skip-review]"
+argument-hint: "[pr-numbers-or-links...] [--post] [--inline] [--skip-review] [--quick]"
 allowed-tools: Bash, Read, Grep, Glob, Task, Write, Skill, Agent
 ---
 
@@ -20,6 +20,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
   it changes how every layer in step 5 (and the wait in step 6) runs.
 - `--skip-review` - read `<skill-dir>/skip-review.md` before step 5 and
   follow it (its "In `review`" section); it drops two of the four layers.
+- `--quick` - read `<skill-dir>/quick-mode.md` before step 3 and follow it;
+  one combined agent per PR, no Phase 0. Lower confidence.
   Only load these files when the matching flag was actually passed.
 
 ## Steps
@@ -110,7 +112,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    check in the review and treat the round like a PARTIAL one.
 4. **Context pack.** Write `<outdir>/CONTEXT-<n>.md` ONCE: PR title/body
    digest, commit list, changed-file map, head SHA, `ledger.py report`
-   output, and the FACTS file location. In delta and rebase mode also add
+   output, the FACTS file location, and an `Excludes` list (`conventions.md`
+   review excludes; omit when empty). In delta and rebase mode also add
    the PR author's replies on earlier review threads (`gh api graphql`
    `reviewThreads`, comments whose author is the PR author), each with its
    thread's file:line. A finding the author answered with a reason is not
@@ -166,7 +169,10 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    Every dispatch prompt MUST include, with `<worktree>`, `<outdir>` and
    `<n>` resolved to their actual absolute paths and PR number (subagents
    do not inherit the orchestrator's cwd): "Do NOT post anything to GitHub.
-   Do not spawn agents. Read <outdir>/CONTEXT-<n>.md and <outdir>/FACTS-<n>.md first. Write your
+   Do not spawn agents. Read <outdir>/CONTEXT-<n>.md and <outdir>/FACTS-<n>.md first. Cite every
+   position as a repo-root-relative `path/from/repo/root.py:LINE`, never a
+   shortened or absolute path. Report nothing under the context pack's
+   Excludes. Write your
    findings to <outdir>/REVIEW-<n>-<layer>.md as your final action; its
    last non-blank line must be exactly COMPLETE, or PARTIAL: <reason> -
    only PARTIAL carries a reason."

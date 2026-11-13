@@ -559,3 +559,37 @@ def test_cleanup_tries_a_plain_remove_and_reports_leftovers():
     )
     assert "--release <worktree>" in block
     assert "leftover path" in block
+
+
+def test_every_layer_brief_requires_repo_root_relative_citations():
+    """Layers cite repo-root-relative paths, never shortened or absolute ones."""
+    landmine = SCRIPTS.parents[1] / "landmine-review" / "SKILL.md"
+    for path in (SKILL, HUNTER, EDGE, landmine):
+        text = _flat(path.read_text())
+        assert "path/from/repo/root.py:LINE" in text, path.name
+        assert "never a shortened or absolute path" in text, path.name
+
+
+def test_project_excludes_reach_the_layers():
+    """Paths the project's agent docs exclude ride the context pack and layers drop findings there."""
+    assert "Review excludes" in _flat(CONVENTIONS.read_text())
+    body = _flat(SKILL.read_text())
+    assert "an `Excludes` list" in body
+    assert "Report nothing under the context pack's Excludes" in body
+
+
+def test_quick_mode_is_a_flagged_lower_confidence_single_agent_round():
+    """--quick runs one agent per PR without Phase 0, says so in the body, and forces the next round full."""
+    head = SKILL.read_text().split("## Steps")[0]
+    assert "[--quick]" in head and "quick-mode.md" in head
+    quick = _flat((SCRIPTS.parent / "quick-mode.md").read_text())
+    for token in (
+        "ONE agent per PR",
+        "Skip step 3",
+        "lower confidence",
+        "posted review body",
+        "--skipped project,landmine,hunter,edge`",
+        "the verdict is COMMENT at best",
+        "ignore `--skip-review` when both are passed",
+    ):
+        assert token in quick, token

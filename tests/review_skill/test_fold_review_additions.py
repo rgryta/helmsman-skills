@@ -464,3 +464,16 @@ def test_pipeline_caps_pr_count_by_merging_seams():
         assert token in phase1, token
     final_report = _flat_path(PIPELINE).split("## Final report")[1]
     assert "spec split line names any units merged" in final_report
+
+
+def test_style_rewrite_tool_gets_one_bounded_attempt():
+    """An optional rewrite tool is tried once with a time limit, then the text is written by hand."""
+    pr_comments = SCRIPTS.parents[1] / "pr-comments" / "SKILL.md"
+    for path in (FOLD, pr_comments):
+        text = _flat_path(path)
+        for token in (
+            "one attempt with a time limit",
+            "write the text yourself",
+            "never retry in a loop",
+        ):
+            assert token in text, (path.parent.name, token)

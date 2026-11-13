@@ -13,6 +13,11 @@ rule wherever it states one.
   (`review-<n>`, `fold-<n>`, `<branch>`); never work in the main checkout.
 - **PR descriptions.** Default: at most 10 lines, professional, no emoji, no
   co-author trailers; state clearly what is deferred.
+- **Review excludes.** Default: none. When the agent docs name paths,
+  directories or sibling repos reviews must ignore, the review context pack
+  lists them under `Excludes` and every layer drops findings there.
+- **PR count.** Default: no cap. A cap in the agent docs, or feature-pipeline's
+  `--max-prs <n>`, merges units along logical seams instead of exceeding it.
 - **Reply voice.** Default: `pr-comments`' voice contract.
 - **Comment density.** Default: Phase 0's `d_comment_density` cap of 20%
   comment lines over added code; a project's own cap reaches Phase 0 via

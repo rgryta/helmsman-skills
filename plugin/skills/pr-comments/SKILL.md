@@ -30,7 +30,8 @@ One shared rulebook, one place for the mechanics.
 Unless the project's agent docs say otherwise: max 25 words for replies (a review body and its inline findings, as `review
 --post` builds them, carry each finding in full). No em-dash, no semicolon,
 no emoji. State the defect and a concrete fix. Never blame a ticket or author - frame as a guard against a
-described failure. Use a style-rewrite tool when the environment provides one. Review
+described failure. Use a style-rewrite tool when the environment provides one: one
+attempt with a time limit; on failure or hang write the text yourself, never retry in a loop. Review
 verdicts are approve-with-comments or comment-only - never REQUEST_CHANGES.
 
 ## post

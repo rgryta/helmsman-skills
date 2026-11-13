@@ -458,7 +458,8 @@ reason:
   show it
 
 Bodies follow the reply voice in `../review/conventions.md`; use a
-style-rewrite tool when the environment provides one. A finding with no thread behind it - a top-level review body, an issue
+style-rewrite tool when the environment provides one (one attempt with a time limit; on
+failure or hang write the text yourself, never retry in a loop). A finding with no thread behind it - a top-level review body, an issue
 comment, or a local review file that was never posted to GitHub - has nothing to reply to,
 and its reasoning reaches the reader through step 8's report only.
 
