@@ -418,3 +418,49 @@ def test_trivial_fold_skips_only_a_small_insensitive_spec_review():
         "`skipped: trivial change`",
     ):
         assert token in step3, token
+
+
+def test_pipeline_checks_push_access_in_phase0():
+    """Phase 0 verifies gh auth, remote reachability and push permission, and stops on failure."""
+    phase0 = _flat_path(PIPELINE).split("## Phase 0")[1].split("## Phase 1")[0]
+    for token in (
+        "gh auth status",
+        "for EACH repo the feature touches, from its checkout",
+        "git -C <checkout> ls-remote origin HEAD",
+        "gh api repos/{owner}/{repo} --jq .permissions.push",
+        "stop and tell the user",
+    ):
+        assert token in phase0, token
+
+
+def test_pipeline_opens_each_draft_with_its_spec_right_after_commit():
+    """Each unit's draft PR opens right after its commit, described by that unit's spec."""
+    phase3 = _flat_path(PIPELINE).split("## Phase 3")[1].split("## Phase 4")[0]
+    assert "open its **draft** PR right after its commit" in phase3
+    assert "that unit's spec" in phase3 and "do not wait for the other units" in phase3
+
+
+def test_pipeline_raises_manual_production_steps_before_implementation():
+    """A design needing manual operator action in prod is raised before Phase 3 and hunted in Phase 2."""
+    text = _flat_path(PIPELINE)
+    phase1 = text.split("## Phase 1")[1].split("## Phase 2")[0]
+    assert "Manual operator action in production is a decisive constraint" in phase1
+    assert "raise it to the user before Phase 3" in phase1
+    assert "manual operator steps in production" in text.split("## Phase 2")[1]
+    assert "manual operator action in production (Phase 1)" in text
+
+
+def test_pipeline_caps_pr_count_by_merging_seams():
+    """`--max-prs` is a listed flag; over the cap units merge by seam and the merge is reported."""
+    assert "[--max-prs <n>]" in PIPELINE.read_text().split("---")[1]
+    phase1 = _flat_path(PIPELINE).split("## Phase 1")[1].split("## Phase 2")[0]
+    for token in (
+        "merge units along their logical seams",
+        "never exceed it",
+        "say which units were merged",
+        "the flag wins over the docs",
+        "a docs cap stated per chain applies per chain",
+    ):
+        assert token in phase1, token
+    final_report = _flat_path(PIPELINE).split("## Final report")[1]
+    assert "spec split line names any units merged" in final_report
