@@ -50,7 +50,8 @@ def test_inconclusive_runner_not_reported_as_killed(fixture_repo, monkeypatch):
     )
     commit_all(fixture_repo)
     mod = load("h_mutation", "checks/h_mutation.py")
-    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: 2)
+    codes = iter([0, 2])
+    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: next(codes))
     out = mod.run(str(fixture_repo), "origin/main")
     assert "all 1 probed mutants killed" not in out
     assert "check_guard" in out
@@ -63,7 +64,8 @@ def test_inconclusive_runner_reports_its_own_exit_code(fixture_repo, monkeypatch
     )
     commit_all(fixture_repo)
     mod = load("h_mutation", "checks/h_mutation.py")
-    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: 7)
+    codes = iter([0, 7])
+    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: next(codes))
     out = mod.run(str(fixture_repo), "origin/main")
     assert "all 1 probed mutants killed" not in out
     assert "check_guard" in out
@@ -195,7 +197,8 @@ def test_sigterm_restores_mutated_file_before_exit(fixture_repo):
     )
     (fixture_repo / "pkg" / "test_mod.py").write_text(
         "import time\n\nfrom pkg.mod import check_guard\n\n\n"
-        "def test_guard():\n    time.sleep(6)\n    assert check_guard(50)\n"
+        "def test_guard():\n    if check_guard(5):\n        time.sleep(30)\n"
+        "    assert check_guard(50)\n"
     )
     commit_all(fixture_repo)
     mod_path = fixture_repo / "pkg" / "mod.py"
@@ -312,7 +315,7 @@ def test_termination_keeps_already_survived_mutants(fixture_repo, monkeypatch):
     mod_path.write_text(original)
     commit_all(fixture_repo)
     mod = load("h_mutation", "checks/h_mutation.py")
-    codes = iter([0])
+    codes = iter([0, 0])
 
     def run_tests(*a):
         code = next(codes, None)
@@ -325,3 +328,89 @@ def test_termination_keeps_already_survived_mutants(fixture_repo, monkeypatch):
     assert out.startswith("FINDINGS: 1/1 mutants survived"), out
     assert "SURVIVED" in out and "results are partial" in out
     assert mod_path.read_text() == original
+
+
+@needs_pytest
+def test_unrelated_red_test_never_counts_mutants_as_killed(fixture_repo):
+    """A suite already red without a mutant says nothing about any mutant."""
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "def check_guard(n):\n    return n > 10\n"
+    )
+    (fixture_repo / "pkg" / "test_mod.py").write_text(
+        "from pkg.mod import check_guard\n\n\n"
+        "def test_db():\n    raise ConnectionError('db down')\n\n\n"
+        "def test_guard():\n    assert check_guard(50) in (True, False)\n"
+    )
+    commit_all(fixture_repo)
+    out = load("h_mutation", "checks/h_mutation.py").run(
+        str(fixture_repo), "origin/main"
+    )
+    assert out.startswith("SKIPPED: no mutant was run"), out
+    assert "pkg tests exit 1 with no mutant" in out
+
+
+def test_project_runner_is_used_for_mutants(fixture_repo, tmp_path, monkeypatch):
+    """HELMSMAN_PYTEST_RUNNER replaces plain pytest here as it does in c_pytest."""
+    runner = tmp_path / "runner.sh"
+    runner.write_text("#!/bin/sh\nexit 0\n")
+    runner.chmod(0o755)
+    monkeypatch.setenv("HELMSMAN_PYTEST_RUNNER", str(runner))
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "def check_guard(n):\n    return n > 10\n"
+    )
+    commit_all(fixture_repo)
+    out = load("h_mutation", "checks/h_mutation.py").run(
+        str(fixture_repo), "origin/main"
+    )
+    assert "SURVIVED: pkg/mod.py:2" in out, out
+
+
+def test_async_guards_are_mutated():
+    mod = load("h_mutation", "checks/h_mutation.py")
+    muts = mod._mutants("async def verify_token(n):\n    return n > 1\n")
+    assert [label for _, _, label in muts] == ["> -> <= in verify_token"]
+
+
+def test_mutant_is_not_started_when_less_time_is_left_than_the_baseline_took(
+    fixture_repo, monkeypatch
+):
+    """A green mutant run takes as long as the baseline, so it must fit the budget left."""
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "def check_guard(n):\n    return n > 10\n"
+    )
+    commit_all(fixture_repo)
+    mod = load("h_mutation", "checks/h_mutation.py")
+    clock = [0.0]
+
+    class FakeTime:
+        @staticmethod
+        def monotonic():
+            return clock[0]
+
+    def baseline_then_survivor(*a):
+        clock[0] += 115
+        return 0
+
+    monkeypatch.setattr(mod, "time", FakeTime)
+    monkeypatch.setattr(mod, "BUDGET_S", 220)
+    monkeypatch.setattr(
+        mod._env, "ensure_project_env", lambda worktree, timeout: (None, False, "")
+    )
+    monkeypatch.setattr(mod, "_run_pkg_tests", baseline_then_survivor)
+    out = mod.run(str(fixture_repo), "origin/main")
+    assert out.startswith("SKIPPED: no mutant was run"), out
+    assert "check budget spent" in out
+
+
+def test_a_timed_out_baseline_is_not_described_as_a_failing_suite(
+    fixture_repo, monkeypatch
+):
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "def check_guard(n):\n    return n > 10\n"
+    )
+    commit_all(fixture_repo)
+    mod = load("h_mutation", "checks/h_mutation.py")
+    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: -1)
+    out = mod.run(str(fixture_repo), "origin/main")
+    assert "pkg tests did not finish within" in out, out
+    assert "exit -1" not in out

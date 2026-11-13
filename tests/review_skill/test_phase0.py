@@ -7,7 +7,13 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from .conftest import SCRIPTS, commit_all
+
+needs_pytest = pytest.mark.skipif(
+    not (shutil.which("pytest") or shutil.which("uv")), reason="no pytest on PATH"
+)
 
 
 def load(name: str, rel: str):
@@ -557,3 +563,102 @@ def test_mutation_waits_for_fast_checks(fixture_repo, tmp_path):
     )
     assert phase0.main([str(fixture_repo), str(out)]) == 0
     assert events == ["fast done", "mutation start"]
+
+
+def test_unreadable_start_state_restores_nothing(fixture_repo, tmp_path, monkeypatch):
+    """Without the start state, a restore could revert the operator's own edits."""
+    phase0 = load("phase0", "phase0.py")
+    out = tmp_path / "FACTS.md"
+    target = fixture_repo / "pkg" / "mod.py"
+    mine = target.read_text() + "\n# work in progress\n"
+    target.write_text(mine)
+    real_dirty = phase0._dirty
+    calls = []
+
+    def first_status_fails(worktree):
+        calls.append(worktree)
+        return None if len(calls) == 1 else real_dirty(worktree)
+
+    monkeypatch.setattr(phase0, "_dirty", first_status_fails)
+    setattr(phase0, "CHECKS", [("okcheck", fake_check(lambda w, b: "OK: fine"))])
+    assert phase0.main([str(fixture_repo), str(out)]) == 0
+    assert target.read_text() == mine
+    repair = out.read_text().split("## _worktree_repair")[1]
+    assert repair.lstrip().startswith("ERROR:") and "nothing was restored" in repair
+
+
+def test_phase0_guard_drops_a_stale_facts_file(tmp_path, monkeypatch):
+    """A re-run into the same outdir must never report the previous run's facts."""
+    guard = load("run_phase0_stale", "run_phase0.py")
+    child = tmp_path / "phase0.py"
+    child.write_text("import sys\nsys.exit(3)\n")
+    monkeypatch.setattr(guard, "PHASE0", child)
+    out = tmp_path / "FACTS.md"
+    out.write_text("# Phase 0 facts from the previous run\n")
+    assert guard.main([str(tmp_path), str(out)]) == 3
+    assert out.read_text().startswith("Phase 0 unavailable: child ended with exit 3")
+
+
+def _mutation_only_guard(fixture_repo, tmp_path):
+    phase0 = load("phase0", "phase0.py")
+    skip = ",".join(n for n in phase0._discover_names() if n != "h_mutation")
+    (fixture_repo / "pkg" / "mod.py").write_text(
+        "def check_guard(n):\n    return n > 10\n"
+    )
+    (fixture_repo / "pkg" / "test_mod.py").write_text(
+        "import time\n\nfrom pkg.mod import check_guard\n\n\n"
+        "def test_guard():\n    if check_guard(5):\n        time.sleep(30)\n"
+        "    assert check_guard(50)\n"
+    )
+    commit_all(fixture_repo)
+    mod_path = fixture_repo / "pkg" / "mod.py"
+    original = mod_path.read_bytes()
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            str(SCRIPTS / "run_phase0.py"),
+            str(fixture_repo),
+            str(tmp_path / "FACTS.md"),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env={**os.environ, "HELMSMAN_PHASE0_SKIP": skip},
+    )
+    deadline = time.monotonic() + 60
+    while mod_path.read_bytes() == original:
+        if proc.poll() is not None or time.monotonic() > deadline:
+            proc.kill()
+            raise AssertionError("the mutant was never written")
+        time.sleep(0.1)
+    return proc, mod_path, original
+
+
+def _restored_within(mod_path, original, seconds):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if mod_path.read_bytes() == original:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+@needs_pytest
+def test_sighup_to_the_guard_restores_the_mutant(fixture_repo, tmp_path):
+    """A hung-up session must not leave a flipped comparison in the source."""
+    proc, mod_path, original = _mutation_only_guard(fixture_repo, tmp_path)
+    try:
+        proc.send_signal(signal.SIGHUP)
+        assert proc.wait(timeout=20) == 128 + signal.SIGHUP
+        assert _restored_within(mod_path, original, 5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+@needs_pytest
+def test_killed_guard_takes_phase0_down_and_restores_the_mutant(fixture_repo, tmp_path):
+    """A SIGKILLed guard cannot forward a signal, so Phase 0 notices it is orphaned."""
+    proc, mod_path, original = _mutation_only_guard(fixture_repo, tmp_path)
+    proc.kill()
+    proc.wait()
+    assert _restored_within(mod_path, original, 15)

@@ -39,10 +39,25 @@ def test_ruff_reports_new_violation(fixture_repo):
     assert out.startswith("FINDINGS:") and "F401" in out
 
 
+@pytest.mark.skipif(
+    not (shutil.which("ruff") or shutil.which("uvx")), reason="no ruff/uvx"
+)
+def test_ruff_reports_a_file_that_does_not_parse(fixture_repo):
+    (fixture_repo / "pkg" / "mod.py").write_text("def added(y:\n    return y\n")
+    commit_all(fixture_repo)
+    out = load("a_ruff", "checks/a_ruff.py").run(str(fixture_repo), "origin/main")
+    assert out.startswith("FINDINGS:") and "invalid-syntax" in out, out
+
+
 def test_ruff_line_parser_accepts_paths_with_spaces():
     pattern = load("a_ruff", "checks/a_ruff.py")._VIOLATION_LINE
     assert pattern.match("my dir/mod.py:1:8: F401 [*] `os` imported but unused")
     assert not pattern.match("Found 1 error.")
+
+
+def test_ruff_line_parser_accepts_older_ruff_syntax_errors():
+    pattern = load("a_ruff", "checks/a_ruff.py")._VIOLATION_LINE
+    assert pattern.match("m.py:1:13: SyntaxError: Expected ')', found newline")
 
 
 def test_uvx_fallback_fires_when_primary_missing(fixture_repo, tmp_path, monkeypatch):
@@ -299,6 +314,19 @@ def test_a_deferred_import_the_diff_adds_is_reported(tmp_path):
     )
     assert "Deferred imports" in out
     assert "imports `json`" in out
+
+
+def test_a_deferred_import_in_a_nested_function_is_listed_once(tmp_path):
+    repo = _import_repo(
+        tmp_path,
+        "def f():\n    return 1\n",
+        "def f():\n    def inner():\n        import json\n\n        return json\n\n    return inner\n",
+    )
+    out = load("f_import_closure", "checks/f_import_closure.py").run(
+        str(repo), "origin/main"
+    )
+    assert out.count("imports `json`") == 1, out
+    assert "in `inner` imports `json`" in out
 
 
 def test_a_pre_existing_deferred_import_is_not_reported(tmp_path):

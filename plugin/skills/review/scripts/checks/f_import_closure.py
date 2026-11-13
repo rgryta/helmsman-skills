@@ -117,7 +117,7 @@ def _deferred_imports(d, worktree, base, files):
     defects. Scoped to added lines because a repo can carry many deliberate ones.
     """
     added_map = d.added_lines_by_path(worktree, base, files)
-    out = []
+    out = {}
     for path in files:
         full = Path(worktree, path)
         if not full.exists():
@@ -140,8 +140,11 @@ def _deferred_imports(d, worktree, base, files):
                 name = getattr(node, "module", None) or ", ".join(
                     a.name for a in node.names
                 )
-                out.append(f"- {path}:{node.lineno} in `{fn.name}` imports `{name}`")
-    return out
+                # ast.walk reaches an outer function first, so the innermost one wins
+                out[(path, node.lineno)] = (
+                    f"- {path}:{node.lineno} in `{fn.name}` imports `{name}`"
+                )
+    return list(out.values())
 
 
 def run(worktree, base):
