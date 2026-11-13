@@ -46,7 +46,7 @@ def test_fold_review_defines_its_outdir_outside_every_repo():
 def test_fold_review_diff_review_binds_the_outdir():
     """The diff-review dispatch and its wait both name <outdir> in the argument position."""
     block = _flat()
-    assert "await_layers.py <outdir> <n> hunter,landmine 540 5" in block
+    assert "await_layers.py <outdir> <n> hunter,edge,landmine 540 5" in block
     assert "<outdir>/REVIEW-<n>-<layer>.md" in block
     assert "NO_OUTDIR" in block
 

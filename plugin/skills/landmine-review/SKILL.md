@@ -248,7 +248,7 @@ Emoji: 🔴 blocker · 🟠 should-fix · 🟡 question · ⚪ nitpick.
 <suspected landmines that are actually fine, with why>
 
 ## Verdict
-<approve / request-changes / comment> — 🔴 N · 🟠 N · 🟡 N · ⚪ N
+<approve / comment> — 🔴 N · 🟠 N · 🟡 N · ⚪ N
 ```
 
 ## Recurring landmines for THIS repo (prime on these)

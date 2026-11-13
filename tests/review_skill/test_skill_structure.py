@@ -448,3 +448,17 @@ def test_both_skills_warn_before_launching_phase0_on_uncommitted_work():
         flat = _flat(text)
         assert "git restore" in flat and "unrecoverable" in flat
         assert "COMMIT FIRST" in flat or "Commit before you launch it" in flat
+
+
+def test_spec_reviews_dispatch_edge_alongside_hunter():
+    """Boundary work left hunter, so every workflow that runs hunter also runs edge."""
+    for skill_name in ("fold-review", "feature-pipeline"):
+        text = _flat((SCRIPTS.parent.parent / skill_name / "SKILL.md").read_text())
+        assert "`../review/hunter.md` and `../review/edge.md`" in text, skill_name
+        assert "edge-case-hunter" not in text, skill_name
+
+
+def test_no_layer_offers_request_changes():
+    """Every review verdict is approve or comment, never request-changes."""
+    landmine = (SCRIPTS.parent.parent / "landmine-review" / "SKILL.md").read_text()
+    assert "request-changes" not in landmine.lower()
