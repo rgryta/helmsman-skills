@@ -1,4 +1,5 @@
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -15,6 +16,7 @@ def run(worktree, base):
     files = _diff.changed_py_files(worktree, base)
     if not files:
         return "OK: no python changes"
+    started = time.monotonic()
     python, trusted, env = _env.ensure_project_env(worktree)
     flags = ["--level", "error"]
     tools = []
@@ -25,7 +27,8 @@ def run(worktree, base):
             tools.append([str(pinned)])
     tools += [["pyright"], ["uvx", "pyright"]]
     for tool in tools:
-        code, out = _diff.run_cmd([*tool, *flags, *files], cwd=worktree, timeout=300)
+        left = max(1, _diff.CHECK_BUDGET_S - (time.monotonic() - started))
+        code, out = _diff.run_cmd([*tool, *flags, *files], cwd=worktree, timeout=left)
         if code == -2:
             continue
         if code in (-1, -3):

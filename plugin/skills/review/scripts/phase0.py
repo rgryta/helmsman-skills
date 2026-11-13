@@ -21,10 +21,10 @@ def _discover_names():
     )
 
 
-def _merge_base(worktree):
+def _merge_base(worktree, ref):
     try:
         r = subprocess.run(
-            ["git", "merge-base", "origin/main", "HEAD"],
+            ["git", "merge-base", ref, "HEAD"],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -42,10 +42,18 @@ def _write_atomic(path, text):
     os.replace(tmp, path)
 
 
+def _resolve_base(worktree, ref):
+    for candidate in [ref] if ref else ["origin/HEAD", "origin/main"]:
+        base = _merge_base(worktree, candidate)
+        if base:
+            return candidate, base
+    return ref or "origin/HEAD or origin/main", None
+
+
 def _dirty(worktree):
     try:
         r = subprocess.run(
-            ["git", "-C", worktree, "status", "--porcelain"],
+            ["git", "-C", worktree, "status", "--porcelain", "-z"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -54,36 +62,56 @@ def _dirty(worktree):
         return None
     if r.returncode != 0:
         return None
-    return {
-        line[3:].strip()
-        for line in r.stdout.splitlines()
-        if line.strip() and not line.startswith("??")
-    }
+    paths = set()
+    records = iter(r.stdout.split("\0"))
+    for rec in records:
+        if not rec:
+            continue
+        if rec[0] in "RC":  # -z gives a rename's source path its own record
+            paths.add(next(records, ""))
+        if not rec.startswith("??"):
+            paths.add(rec[3:])
+    paths.discard("")
+    return paths
 
 
 def _repair_worktree(worktree, preexisting):
     """Revert what a check dirtied, never what the operator had open.
 
-    ``git checkout --`` is unrecoverable, so a file already modified when
+    ``git restore`` is unrecoverable, so a file already modified when
     Phase 0 started is left alone even though a check may also have touched
     it: uncommitted work is worth more than a clean fact run.
     """
     now = _dirty(worktree)
-    if not now:
-        return [], []
+    if now is None:
+        return [], [], "could not read git status after the checks ran"
     held = sorted(now & preexisting) if preexisting else []
     dirty = sorted(now - set(held))
-    if dirty:
-        try:
-            subprocess.run(
-                ["git", "-C", worktree, "checkout", "--", *dirty],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-    return dirty, held
+    if not dirty:
+        return [], held, None
+    try:
+        r = subprocess.run(
+            [
+                "git",
+                "--literal-pathspecs",
+                "-C",
+                worktree,
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                *dirty,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return dirty, held, f"{type(e).__name__}: {e}"
+    if r.returncode != 0:
+        return dirty, held, f"exit {r.returncode}: {r.stderr.strip()[:200]}"
+    return dirty, held, None
 
 
 def _run_subprocess_check(name, worktree, base):
@@ -104,7 +132,7 @@ def _run_subprocess_check(name, worktree, base):
             proc.communicate()
             return "SKIPPED: check timed out"
         if proc.returncode != 0:
-            # killed by the terminate, so returncode is -15: a budget overrun,
+            # killed by the terminate (-15, or 143 via _diff's handler): a budget overrun,
             # never the crash the branch below would otherwise report
             return "SKIPPED: check timed out"
         # a check that handled the signal and printed its own partial verdict
@@ -142,16 +170,16 @@ def _run_wave(entries, worktree, base, budget_s, sections, injected):
 
 def main(argv):
     if len(argv) < 2:
-        print("usage: phase0.py <worktree> <out_file>", file=sys.stderr)
+        print("usage: phase0.py <worktree> <out_file> [base_ref]", file=sys.stderr)
         return 2
     worktree, out_file = argv[0], argv[1]
-    base = _merge_base(worktree)
+    ref, base = _resolve_base(worktree, argv[2] if len(argv) > 2 else None)
     if base is None:
         try:
             _write_atomic(
                 Path(out_file),
                 "# Phase 0 facts (base unresolved)\n\n"
-                "SKIPPED: could not resolve merge-base vs origin/main - no deterministic facts\n",
+                f"SKIPPED: could not resolve merge-base vs {ref} - no deterministic facts\n",
             )
         except OSError as e:
             print(f"failed to write FACTS: {e}", file=sys.stderr)
@@ -169,8 +197,15 @@ def main(argv):
     except Exception as e:
         sections["_runner"] = f"ERROR: runner crashed ({type(e).__name__}: {e})"
         names.append("_runner")
-    dirty, held = _repair_worktree(worktree, preexisting)
-    if dirty or held:
+    dirty, held, repair_error = _repair_worktree(worktree, preexisting)
+    if repair_error:
+        sections["_worktree_repair"] = (
+            f"ERROR: worktree restore failed ({repair_error}), so these facts may "
+            "describe a tree that is not at HEAD and the worktree may still carry "
+            "what the checks changed" + (": " + ", ".join(dirty) if dirty else "")
+        )
+        names.append("_worktree_repair")
+    elif dirty or held:
         parts = []
         if dirty:
             parts.append(
@@ -188,7 +223,9 @@ def main(argv):
         names.append("_worktree_repair")
     body = "\n\n".join(f"## {n}\n{sections.get(n, 'ERROR: no result')}" for n in names)
     try:
-        _write_atomic(Path(out_file), f"# Phase 0 facts (base {base[:10]})\n\n{body}\n")
+        _write_atomic(
+            Path(out_file), f"# Phase 0 facts (base {base[:10]} from {ref})\n\n{body}\n"
+        )
     except OSError as e:
         print(f"failed to write FACTS: {e}", file=sys.stderr)
     return 0
