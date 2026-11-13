@@ -11,7 +11,6 @@ MAX_BLOCKS = 12
 MAX_REFERENTS_PER_CLAIM = 4
 MAX_HITS_SHOWN = 3
 WINDOW = 0
-HUNK = re.compile(r"^@@ -\S+ \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 BACKTICKED = re.compile(r"`([^`\n]{2,60})`")
 # \b never matches before a leading underscore, which would hide every private helper
 NOT_WORD = r"(?<![A-Za-z0-9_])"
@@ -52,24 +51,6 @@ _LEAD = (
     "referent the enclosing code never touches is either stale, aspirational, or "
     "describing a neighbour, and only reading the sentence tells you which."
 )
-
-
-def hunks(d, worktree, base, path):
-    code, out = d.run_cmd(
-        ["git", "diff", "-U0", base, "HEAD", "--", path], cwd=worktree, timeout=60
-    )
-    if code != 0:
-        return []
-    spans = []
-    for line in out.splitlines():
-        m = HUNK.match(line)
-        if not m:
-            continue
-        start = int(m.group("start"))
-        count = 1 if m.group("count") is None else int(m.group("count"))
-        if count:
-            spans.append((start, start + count - 1))
-    return spans
 
 
 def _overlaps(spans, lo, hi):
@@ -205,10 +186,11 @@ def run(worktree, base):
     if not files:
         return f"OK: no changed python files to read claims from ({_SCOPE_NOTE})"
     blocks = []
+    added = _diff.added_lines_by_path(worktree, base, files)
     for path in files:
         if len(blocks) >= MAX_BLOCKS:
             break
-        spans = hunks(_diff, worktree, base, path)
+        spans = [(n, n) for n in sorted(added[path] or ())]
         if not spans:
             continue
         full = Path(worktree, path)

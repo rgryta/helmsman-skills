@@ -9,7 +9,6 @@ import _diff  # noqa: E402
 
 MAX_BLOCKS = 14
 MAX_PER_FILE = 4
-HUNK = re.compile(r"^@@ -\S+ \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 ENV_READERS = ("getenv", "environ")
 ASSERTING_CALL = re.compile(r"^(assert|check|verify|expect)", re.IGNORECASE)
 _SCOPE_NOTE = (
@@ -29,24 +28,6 @@ def _is_test_path(f):
     if p.name.startswith("test_") or p.name.endswith("_test.py"):
         return True
     return "tests" in p.parts
-
-
-def hunks(d, worktree, base, path):
-    code, out = d.run_cmd(
-        ["git", "diff", "-U0", base, "HEAD", "--", path], cwd=worktree, timeout=60
-    )
-    if code != 0:
-        return []
-    spans = []
-    for line in out.splitlines():
-        m = HUNK.match(line)
-        if not m:
-            continue
-        start = int(m.group("start"))
-        count = 1 if m.group("count") is None else int(m.group("count"))
-        if count:
-            spans.append((start, start + count - 1))
-    return spans
 
 
 def _overlaps(spans, lo, hi):
@@ -166,10 +147,11 @@ def run(worktree, base):
     if not files:
         return f"OK: no changed python test files ({_SCOPE_NOTE})"
     blocks = []
+    added = _diff.added_lines_by_path(worktree, base, files)
     for path in files:
         if len(blocks) >= MAX_BLOCKS:
             break
-        spans = hunks(_diff, worktree, base, path)
+        spans = [(n, n) for n in sorted(added[path] or ())]
         if not spans:
             continue
         full = Path(worktree, path)

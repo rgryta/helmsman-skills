@@ -14,7 +14,6 @@ MAX_REBINDS = 6
 MAX_CALLERS = 5
 CALLER_NAME_TOO_COMMON = 25
 WINDOW = 40
-HUNK = re.compile(r"^@@ -\S+ \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 TEST_PATH = re.compile(r"(^|/)(tests?|conftest)(/|\.py$)|(^|/)test_[^/]*\.py$")
 _SCOPE_NOTE = (
     "scope: non-test changed python files, insertions into existing functions "
@@ -22,24 +21,6 @@ _SCOPE_NOTE = (
     f"within {WINDOW} lines of a changed hunk, bindings are other assignments to "
     "names the changed lines read"
 )
-
-
-def hunks(d, worktree, base, path):
-    code, out = d.run_cmd(
-        ["git", "diff", "-U0", base, "HEAD", "--", path], cwd=worktree, timeout=60
-    )
-    if code != 0:
-        return []
-    spans = []
-    for line in out.splitlines():
-        m = HUNK.match(line)
-        if not m:
-            continue
-        start = int(m.group("start"))
-        count = 1 if m.group("count") is None else int(m.group("count"))
-        if count:
-            spans.append((start, start + count - 1))
-    return _merge(spans)
 
 
 def _merge(spans):
@@ -197,10 +178,11 @@ def run(worktree, base):
         return f"OK: no non-test python changes ({_SCOPE_NOTE})"
     blocks = []
     candidates = []
+    added = _diff.added_lines_by_path(worktree, base, files)
     for path in files:
         if not Path(worktree, path).exists():
             continue
-        spans = hunks(_diff, worktree, base, path)
+        spans = _merge([(n, n) for n in sorted(added[path] or ())])
         if not spans:
             continue
         try:

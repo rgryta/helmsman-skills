@@ -180,3 +180,11 @@ def test_a_symbol_named_only_inside_a_string_literal_still_resolves(repo):
     )
     out = check().run(str(repo), "origin/main")
     assert out.startswith("OK:")
+
+
+def test_a_pure_rename_is_not_a_change(repo):
+    """A file moved without edits adds no prose, so its existing docstrings are not mined."""
+    seed(repo, {"a.py": GATE_AFTER, "other.py": "LLAMA_CPP = 'llama'\n"})
+    (repo / "a.py").rename(repo / "moved.py")
+    commit_all(repo, "rename")
+    assert check().run(str(repo), "origin/main").startswith("OK:")
