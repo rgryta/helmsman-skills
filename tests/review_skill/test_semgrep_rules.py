@@ -757,3 +757,20 @@ def test_swallowed_exception_message_survives_the_render_cap(tmp_path):
     msg = rule["rules"][0]["message"]
     assert len(msg) <= 120, f"message is {len(msg)} chars and would be truncated"
     assert "nosemgrep" in msg[:120]
+
+
+def test_fallback_note_survives_when_there_are_hits():
+    """The community-packs-unavailable note must be printed alongside findings, not only on a clean run."""
+    mod = load("g_semgrep", "checks/g_semgrep.py")
+    payload = {"results": [_hit(5, "new hit")], "errors": [], "paths": {}}
+    out = mod._render(
+        payload,
+        1,
+        ["pkg/mod.py"],
+        "local rulebook only",
+        set(),
+        note="community packs unavailable (timed out)",
+        added_by_path={"pkg/mod.py": {5}},
+    )
+    assert out.startswith("FINDINGS:")
+    assert "NOTE: community packs unavailable (timed out)" in out

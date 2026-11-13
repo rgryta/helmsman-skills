@@ -22,7 +22,10 @@ OPS = {
     ast.NotEq: ("!=", "=="),
 }
 MAX_MUTANTS = 10
-BUDGET_S = 200  # must stay well under phase0.PER_CHECK_S so a SIGTERM lands between mutants, not mid test-run
+# phase0 SIGTERMs a check at HELMSMAN_PHASE0_CHECK_S; the env sync and every test run must fit under it
+BUDGET_S = _diff.CHECK_BUDGET_S
+PER_MUTANT_S = 120
+MIN_RUN_S = 20
 
 
 class _Terminated(Exception):
@@ -57,7 +60,7 @@ def _pkg_dir(worktree, path):
         if p == root or p == p.parent:
             break
         p = p.parent
-    return path.parent
+    return None
 
 
 def _mutants(src):
@@ -92,10 +95,10 @@ def _mutants(src):
     return out
 
 
-def _run_pkg_tests(d, worktree, pkg_dir, python=None):
+def _run_pkg_tests(d, worktree, pkg_dir, python=None, timeout=PER_MUTANT_S):
     for tool in _env.pytest_commands(worktree, pkg_dir, python):
         code, out = d.run_cmd(
-            [*tool, str(pkg_dir), "-q", "-x"], cwd=worktree, timeout=120
+            [*tool, str(pkg_dir), "-q", "-x"], cwd=worktree, timeout=timeout
         )
         if not _env.runner_unavailable(code, out):
             return code
@@ -111,46 +114,69 @@ def run(worktree, base):
     if not prod_files:
         return "OK: no production files changed (only test files) - nothing to probe"
     start = time.monotonic()
-    survived, uncovered, inconclusive, tried = [], [], [], 0
-    python, synced = None, False
-    for f in prod_files:
-        path = Path(worktree, f)
-        orig_bytes = path.read_bytes()
-        src = orig_bytes.decode("utf-8", errors="ignore")
-        try:
-            muts = _mutants(src)
-        except SyntaxError:
-            continue
-        pkg_dir = _pkg_dir(worktree, path)
-        for lineno, new_line, label in muts:
-            if tried >= MAX_MUTANTS or time.monotonic() - start > BUDGET_S:
-                break
-            tried += 1
-            if not synced:
-                python, _, _ = _env.ensure_project_env(worktree)
-                synced = True
-            lines = src.splitlines(keepends=True)
-            lines[lineno - 1] = new_line
+    survived, uncovered, inconclusive, no_pkg, tried = [], [], [], [], 0
+    python, synced, stopped = None, False, ""
+    try:
+        for f in prod_files:
+            path = Path(worktree, f)
+            orig_bytes = path.read_bytes()
+            src = orig_bytes.decode("utf-8", errors="ignore")
             try:
-                path.write_bytes("".join(lines).encode("utf-8"))
-                code = _run_pkg_tests(_diff, worktree, pkg_dir, python)
-            finally:
-                path.write_bytes(orig_bytes)
-            if code == 0:
-                survived.append(
-                    f"- SURVIVED: {f}:{lineno} ({label}) - tests stay green under this mutant"
-                )
-            elif code == -2:
-                return "SKIPPED: pytest unavailable for mutation probe"
-            elif code == 5:
-                uncovered.append(
-                    f"- UNCOVERED: {f}:{lineno} ({label}) - no tests collected for this guard"
-                )
-            elif code != 1:
-                inconclusive.append(
-                    f"- INCONCLUSIVE: {f}:{lineno} ({label}) - test run exited {code}, mutant not evaluated"
-                )
+                muts = _mutants(src)
+            except SyntaxError:
+                continue
+            pkg_dir = _pkg_dir(worktree, path)
+            if muts and pkg_dir is None:
+                no_pkg.append(f)
+                continue
+            for lineno, new_line, label in muts:
+                if tried >= MAX_MUTANTS:
+                    break
+                if not synced:
+                    python, _, _ = _env.ensure_project_env(
+                        worktree, timeout=min(_env.SYNC_TIMEOUT_S, BUDGET_S - MIN_RUN_S)
+                    )
+                    synced = True
+                left = min(PER_MUTANT_S, BUDGET_S - (time.monotonic() - start))
+                if left < MIN_RUN_S:
+                    stopped = "check budget spent"
+                    break
+                lines = src.splitlines(keepends=True)
+                lines[lineno - 1] = new_line
+                try:
+                    path.write_bytes("".join(lines).encode("utf-8"))
+                    code = _run_pkg_tests(_diff, worktree, pkg_dir, python, left)
+                finally:
+                    path.write_bytes(orig_bytes)
+                tried += 1
+                if code == 0:
+                    survived.append(
+                        f"- SURVIVED: {f}:{lineno} ({label}) - tests stay green under this mutant"
+                    )
+                elif code == -2:
+                    return "SKIPPED: pytest unavailable for mutation probe"
+                elif code == 5:
+                    uncovered.append(
+                        f"- UNCOVERED: {f}:{lineno} ({label}) - no tests collected for this guard"
+                    )
+                elif code != 1:
+                    inconclusive.append(
+                        f"- INCONCLUSIVE: {f}:{lineno} ({label}) - test run exited {code}, mutant not evaluated"
+                    )
+            if stopped:
+                break
+    except _Terminated as e:
+        stopped = str(e)
+    notes = "".join(
+        [f"\n- NOTE: stopped early ({stopped}), results are partial" if stopped else ""]
+        + [
+            f"\n- NOTE: {f} has no owning package (pyproject.toml), so no test dir to run - not probed"
+            for f in no_pkg
+        ]
+    )
     if not tried:
+        if no_pkg or stopped:
+            return "SKIPPED: no mutant was run" + notes
         return "OK: no guard-like changed functions to probe"
     if survived or uncovered or inconclusive:
         return (
@@ -158,8 +184,11 @@ def run(worktree, base):
             f"{len(uncovered)}/{tried} uncovered by any test, "
             f"{len(inconclusive)}/{tried} inconclusive\n"
             + "\n".join(survived + uncovered + inconclusive)
+            + notes
         )
-    return f"OK: all {tried} probed mutants killed by tests"
+    if stopped:
+        return f"SKIPPED: only {tried} mutant(s) ran, all killed by tests" + notes
+    return f"OK: all {tried} probed mutants killed by tests" + notes
 
 
 if __name__ == "__main__":

@@ -31,6 +31,9 @@ _INFRA_MARKERS = (
     "Cannot connect to the Docker daemon",
     "docker.errors",
 )
+_VENDORED_DIRS = frozenset(
+    {".venv", "venv", "node_modules", "site-packages", ".tox", "build", "dist", ".git"}
+)
 INFRA_UNAVAILABLE = "test runner infra unavailable"
 REFUSED_UNVERIFIED = "connection refused, infra or code unverified"
 
@@ -70,7 +73,11 @@ def _mapped_tests(pkg, module):
     stem = Path(module).stem
     found = set()
     for pattern in (f"test_{stem}.py", f"{stem}_test.py"):
-        found.update(q for q in pkg.rglob(pattern) if q.is_file())
+        found.update(
+            q
+            for q in pkg.rglob(pattern)
+            if q.is_file() and _VENDORED_DIRS.isdisjoint(q.relative_to(pkg).parts)
+        )
     return found
 
 

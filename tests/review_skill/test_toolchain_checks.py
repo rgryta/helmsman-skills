@@ -406,6 +406,16 @@ def test_pytest_runs_only_the_tests_named_for_the_change(
     assert "test_unrelated" not in args
 
 
+def test_pytest_ignores_same_named_tests_inside_installed_packages(tmp_path):
+    """A venv or node_modules copy of test_<stem>.py is not this repo's test."""
+    (tmp_path / "test_mod.py").write_text("")
+    for vendored in (".venv/lib/site-packages/dep", "node_modules/dep", "build/lib"):
+        (tmp_path / vendored).mkdir(parents=True)
+        (tmp_path / vendored / "test_mod.py").write_text("")
+    found = load("c_pytest", "checks/c_pytest.py")._mapped_tests(tmp_path, "pkg/mod.py")
+    assert found == {tmp_path / "test_mod.py"}
+
+
 def test_pytest_selects_a_changed_test_file_itself(fixture_repo, tmp_path, monkeypatch):
     bin_dir = _isolated_bin(tmp_path, monkeypatch)
     _shim(bin_dir, "git", "#!/bin/sh\necho pkg/test_thing.py\n")
