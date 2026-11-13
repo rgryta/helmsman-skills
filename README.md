@@ -30,6 +30,10 @@ codex plugin marketplace add https://github.com/rgryta/helmsman-skills.git
 codex plugin add helmsman-skills@helmsman-skills
 ```
 
+Updates install only when `version` changes: bump it in both
+`plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json` with every
+release.
+
 ## Skills
 
 | Skill | Purpose |
