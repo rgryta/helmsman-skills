@@ -240,23 +240,26 @@ fixing, just fix and move on.
 
 ### 4. Implement
 
-Fetch the PR's head ref, then create a fresh worktree at
-`<repo>-worktrees/fold-<n>` checked out **on the actual branch, not detached
-HEAD** - e.g. `git fetch origin <headRefName> <baseRefName>` (both from
-`gh pr view <n> --json headRefName,baseRefName`) followed by
-`git worktree add <repo>-worktrees/fold-<n> <headRefName>` (tracking the
-remote branch). This picks up anything that landed on the branch since the
-original review ran, and it's required for step 4's plain `git push` to
-work - a detached-HEAD worktree has no branch to push. If that branch is
-already checked out in another worktree, `git worktree add` will refuse -
-run `git worktree list` and either reuse the existing worktree or
-`git worktree remove` it first. Immediately after creating the worktree,
-capture its starting commit (`git rev-parse HEAD` in the worktree, before
-any local commits) as `<pre-fold-sha>` - step 5 needs it to scope its diff
-to exactly what this fold changes. Then create this fold's artifact
-directory OUTSIDE every repo: `<outdir>` =
-`~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/fold-<epoch>/` via
-`mkdir -p`, with `<epoch>` from `date +%s`. Every artifact step 5 produces
+Run `python3 ../review/scripts/setup_round.py --repo <owner/repo> --pr <n>
+--fold --tag <task-name>` from inside the repo's local checkout (same flags
+and error JSON as `review` step 1). It fetches `<headRefName>` and
+`<baseRefName>`, adds or reuses the worktree `<repo>-worktrees/fold-<n>`
+checked out **on the actual branch, not detached HEAD** (so step 4's plain
+`git push` works), takes a lease on it, fast-forwards it to the PR head (so it
+picks up anything that landed since the review ran; a dirty or diverged
+worktree fails setup - inspect it, remove it and rerun), creates this fold's
+`<outdir>` = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/fold-<epoch>/`,
+prunes older `fold-*` directories, and prints ONE JSON object: take
+`worktree`, `outdir` and `pre_fold_sha` as `<pre-fold-sha>` (the starting commit, which step 5
+needs to scope its diff to exactly what this fold changes) from it. Exit 3
+means another live session holds the worktree's lease - stop and report,
+never share it. If the branch is already checked out in another worktree,
+the add fails - run `git worktree list` and either rerun with `--worktree
+<that path>` or `git worktree remove` it first. Manual fallback only if the
+script is missing: `git fetch origin <headRefName> <baseRefName>`, `git
+worktree add <repo>-worktrees/fold-<n> <headRefName>`, `git rev-parse HEAD`
+there as `<pre-fold-sha>`, `mkdir -p <outdir>` with `<epoch>` from `date
++%s`. Every artifact step 5 produces
 goes there, never into the worktree - a checkout holds tracked code, and
 untracked scratch `.md` dropped inside one is junk, and a layer told to write into the worktree
 can lose its findings to a denied write and then read as a stalled layer.
@@ -487,9 +490,12 @@ flags, a limitation it removed). If the author is the gh user (`gh api user
 --jq .login`), rewrite only those lines and apply them with `gh pr edit <n>
 --body-file <outdir>/pr-body.md`; otherwise list them in step 8.
 
-On success, remove the worktree (`git worktree remove <repo>-worktrees/fold-<n>`)
-and delete `<outdir>` - step 8's report is written from it, so drop it once
-the report exists.
+On success, remove the worktree (`git worktree remove <repo>-worktrees/fold-<n>`,
+no `--force`; only if that fails, `--force`) and delete `<outdir>` - step 8's
+report is written from it, so drop it once the report exists. Some CLIs'
+command policies block `--force` removal and `rm -rf`; when a removal fails,
+run `setup_round.py --release <worktree> --tag <task-name>` and list every
+leftover path in step 8 - never skip it silently.
 
 ### 8. Report
 

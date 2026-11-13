@@ -517,3 +517,23 @@ def test_waits_go_through_the_shipped_scripts():
     fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
     assert "<skill-dir>/cli-notes.md" in SKILL.read_text()
     assert "../review/cli-notes.md" in fold
+
+
+def test_setup_runs_through_the_script_with_a_lease():
+    """Step 1 delegates setup to setup_round.py and stops on a lease conflict instead of sharing the worktree."""
+    block = _flat(step1())
+    assert (
+        "scripts/setup_round.py --repo <owner/repo> --pr <n> --tag <task-name>" in block
+    )
+    assert "exit 3" in block
+    assert "never rebuild them with shell strings" in block
+
+
+def test_cleanup_tries_a_plain_remove_and_reports_leftovers():
+    """A blocked force removal leaves a reported path, never a silent skip."""
+    block = _flat(step9())
+    assert block.index("`git worktree remove <worktree>` (no `--force`)") < block.index(
+        "`git worktree remove --force <worktree>`"
+    )
+    assert "--release <worktree>" in block
+    assert "leftover path" in block
