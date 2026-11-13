@@ -371,6 +371,28 @@ def test_verdict_withholds_approval_where_the_round_cannot_see():
     assert "never REQUEST_CHANGES" in text
 
 
+def test_named_follow_ups_let_a_self_inflicted_should_fix_approve():
+    """No Blocker plus every own Should-fix named as a concrete follow-up still approves."""
+    text = _flat(verdict())
+    assert "listed under a `## Follow-ups` heading" in text
+    assert "concrete follow-up" in text and "not withhold APPROVE" in text
+    assert text.index("any Blocker -> COMMENT") < text.index("## Follow-ups")
+    assert "## Follow-ups" in SKILL.read_text().split("## Output format")[1]
+
+
+def test_rereview_reuses_unchanged_patches_and_hears_the_author():
+    """A rebase re-anchors, new patches alone are hunted, and answered findings stay answered."""
+    text = _flat(SKILL.read_text())
+    assert "`rebase`" in text and "`delta_commits`" in text
+    assert "re-read every `revisit_files` path at the new head" in text
+    assert "skip steps 3 and 5, fetch the author's replies as in step 4" in text
+    assert "drop findings the author answered" in text
+    assert "step 6's `round-end --complete`" in text
+    assert "PR author's replies on earlier review threads" in text
+    assert "unless the new code contradicts the reply" in text
+    assert "cites the reply" in text
+
+
 def test_the_local_recommendation_obeys_the_same_verdict_rule():
     """A review file read by a human is where the demotion actually lands."""
     text = _flat(verdict())

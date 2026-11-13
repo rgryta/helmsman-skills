@@ -37,7 +37,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/run-<epoch>/`, prunes
    this PR's older `run-*` directories (keeping the newest 3), runs step 2's
    ledger calls, and prints ONE JSON object. Take `worktree`, `outdir`,
-   `head_sha`, `base_ref`, `mode`, `delta_since` and `pr_json` (title, body,
+   `head_sha`, `base_ref`, `mode`, `delta_since`, `delta_commits`, `revisit_files` and
+   `pr_json` (title, body,
    files, commits) from it - never rebuild them with shell strings. A
    non-zero exit prints `{"ok": false, "error": ...}`: a `gh auth` failure
    means stop and tell the user; exit 3 means another live session holds
@@ -63,8 +64,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    directory per run keeps a previous round's findings file out of step 6's
    readiness check, which cannot tell one round's output from another's.
 2. **Ledger + mode.** `setup_round.py` already ran this step: its `mode`
-   is `full` or `delta` and `delta_since` the old SHA, with the ancestry
-   check and `round-start` done. Run the calls below by hand only in the
+   is `full`, `delta` or `rebase` and `delta_since` the old SHA, with the
+   ancestry check and `round-start` done. Run the calls below by hand only in the
    manual fallback, or to force full mode (external API shapes changed)
    with a second `round-start --mode full`. Every `ledger.py` call requires
    `--repo <owner/repo> --pr <n>` (argparse enforces them on every subcommand); later calls below
@@ -75,9 +76,23 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    `FULL_REHUNT` once `FULL_REHUNT_EVERY` (default 5, override with
    `--full-every N`) consecutive delta rounds have run since the last full
    one. Delta only counts if the old SHA is still an ancestor: `git
-   merge-base --is-ancestor <sha> <head>` in the worktree - on failure
-   (rebase/force-push) treat as FULL_REHUNT. Delta mode: layers hunt the
-   diff since that SHA plus re-verify every ledger finding not `fixed`; a
+   merge-base --is-ancestor <sha> <head>` in the worktree. When it is not,
+   `setup_round.py` compares per-commit patch-ids of the old and new head
+   against their merge-bases with `origin/<base_ref>`: every patch unchanged
+   -> mode `rebase` (`delta_commits` empty): skip steps 3 and 5, fetch the
+   author's replies as in step 4, re-locate every ledger finding not `fixed`
+   at the new head (re-verify file:line, `upsert` the new line, `set-status
+   fixed` where the code is gone), drop findings the author answered, run
+   step 6's `round-end --complete` (no layers ran, so the round is
+   complete), then write and post from the ledger; some patches new -> mode `delta` with
+   `delta_commits` listing those commits: layers hunt only `git show
+   <commit>` for each plus re-read every `revisit_files` path at the new
+   head (files of old commits whose patch vanished, so a dropped or amended
+   commit's lost code is still checked), and the ledger findings carry the
+   rest; history it
+   cannot compare, or commits only dropped -> `full`. Delta mode: layers
+   hunt the diff since that SHA (or the `delta_commits`) plus re-verify every
+   ledger finding not `fixed`; a
    MISSED-EARLIER claim on unchanged code still requires hunk/blob-level
    verification, never "file unchanged" alone. Full mode (also forced when
    external API shapes changed): layers see the whole PR diff. Before
@@ -95,7 +110,12 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    check in the review and treat the round like a PARTIAL one.
 4. **Context pack.** Write `<outdir>/CONTEXT-<n>.md` ONCE: PR title/body
    digest, commit list, changed-file map, head SHA, `ledger.py report`
-   output, and the FACTS file location. Layer prompts put static skill text
+   output, and the FACTS file location. In delta and rebase mode also add
+   the PR author's replies on earlier review threads (`gh api graphql`
+   `reviewThreads`, comments whose author is the PR author), each with its
+   thread's file:line. A finding the author answered with a reason is not
+   raised again unless the new code contradicts the reply, and then the
+   finding cites the reply. Layer prompts put static skill text
    FIRST and PR-specific text LAST, and reference files by path - never
    paste the diff or a per-layer PR narrative into prompts.
 5. **Dispatch layers in ONE message, in the background.** Under
@@ -303,7 +323,10 @@ Read off the file's own counts rather than off the narrative, and apply it to
 the recommendation line in REVIEW-PR-<n>.md exactly as to a posted verdict.
 
 - any Blocker -> COMMENT
-- any Should-fix whose disposition is `this diff` -> COMMENT
+- any Should-fix whose disposition is `this diff` -> COMMENT, unless every
+  such Should-fix is also listed under a `## Follow-ups` heading in the
+  body, each as a concrete follow-up (what to change, where); then it does
+  not withhold APPROVE
 - a `pre-existing` Should-fix may still APPROVE, with the finding and its
   disposition in the body
 - a round recorded PARTIAL, a FACTS file carrying an `ERROR:` section, or a
@@ -324,6 +347,7 @@ the recommendation line in REVIEW-PR-<n>.md exactly as to a posted verdict.
 ## Blockers        ### 1. <title> `[provenance]` - [file:line](path#Lline), disposition, what breaks, who consumes it and does what, fix
 ## Should-fix     ### same shape; a demoted layer-blocker names why it sits here
 ## Nitpicks
+## Follow-ups     (only when approving with `this diff` Should-fix; one concrete item each)
 ## Decisions made (confirm each was intentional) `[landmine]`
 ## Open questions
 ## Verification log   | Claim | Verified against | Status |

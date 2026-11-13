@@ -233,7 +233,49 @@ def _ledger(args, *extra):
     ).stdout.strip()
 
 
-def _round_mode(args, worktree, head):
+def _patch_ids(worktree, base, tip):
+    log = _run(["git", "log", "-p", "--no-merges", f"{base}..{tip}"], cwd=worktree)
+    ids = subprocess.run(
+        ["git", "patch-id", "--stable"],
+        cwd=worktree,
+        input=log.stdout,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return {c: p for p, c in (line.split() for line in reversed(ids.splitlines()))}
+
+
+def rebased_commits(worktree, base_ref, old, new):
+    """(commits on `new` whose patch `old` lacks, files of `old` commits whose patch vanished).
+
+    None when the history cannot be compared or commits were only lost.
+    """
+    if not _has_commit(worktree, old):
+        return None
+    upstream = f"origin/{base_ref}"
+    bases = [
+        _run(["git", "merge-base", sha, upstream], cwd=worktree, check=False)
+        for sha in (old, new)
+    ]
+    if any(b.returncode != 0 for b in bases):
+        return None
+    old_ids = _patch_ids(worktree, bases[0].stdout.strip(), old)
+    new_ids = _patch_ids(worktree, bases[1].stdout.strip(), new)
+    changed = [c for c, p in new_ids.items() if p not in old_ids.values()]
+    vanished = [c for c, p in old_ids.items() if p not in new_ids.values()]
+    if vanished and not changed:
+        return None
+    files = {
+        f
+        for c in vanished
+        for f in _run(
+            ["git", "show", "--name-only", "--format=", c], cwd=worktree
+        ).stdout.split()
+    }
+    return changed, sorted(files)
+
+
+def _round_mode(args, worktree, head, base_ref):
     delta = _ledger(
         args,
         "delta",
@@ -242,6 +284,7 @@ def _round_mode(args, worktree, head):
         *(["--full-every", str(args.full_every)] if args.full_every else []),
     )
     since = delta.split()[1] if delta.startswith("DELTA_SINCE ") else None
+    commits = revisit = None
     if since and (
         _run(
             ["git", "merge-base", "--is-ancestor", since, head],
@@ -250,10 +293,21 @@ def _round_mode(args, worktree, head):
         ).returncode
         != 0
     ):
-        since = None
-    mode = "delta" if since else "full"
-    _ledger(args, "round-start", "--sha", head, "--mode", mode)
-    return mode, since
+        rebased = rebased_commits(worktree, base_ref, since, head)
+        if rebased is None:
+            since = None
+        else:
+            commits, revisit = rebased
+    mode = "full" if not since else "rebase" if commits == [] else "delta"
+    _ledger(
+        args,
+        "round-start",
+        "--sha",
+        head,
+        "--mode",
+        "full" if mode == "full" else "delta",
+    )
+    return mode, since, commits, revisit
 
 
 def setup(args):
@@ -316,7 +370,12 @@ def setup(args):
             ["git", "rev-parse", "HEAD"], cwd=worktree
         ).stdout.strip()
     else:
-        out["mode"], out["delta_since"] = _round_mode(args, worktree, head)
+        (
+            out["mode"],
+            out["delta_since"],
+            out["delta_commits"],
+            out["revisit_files"],
+        ) = _round_mode(args, worktree, head, view["baseRefName"])
     return out
 
 
