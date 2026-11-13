@@ -1,3 +1,4 @@
+import fcntl
 import importlib.util
 import os
 import signal
@@ -245,7 +246,7 @@ def test_main_repairs_dirty_worktree_and_records_it_in_facts(fixture_repo, tmp_p
 
 def test_budget_constants_stay_inside_the_poll_window():
     phase0 = load("phase0", "phase0.py")
-    assert phase0.PARALLEL_BUDGET_S + phase0.SERIAL_BUDGET_S < 600
+    assert phase0.PARALLEL_BUDGET_S + phase0.SERIAL_BUDGET_S + phase0.LOCK_WAIT_S < 600
     assert phase0.PARALLEL_BUDGET_S >= phase0.PER_CHECK_S + phase0.GRACE_S
     assert phase0.SERIAL_BUDGET_S >= phase0.PER_CHECK_S + phase0.GRACE_S
 
@@ -478,3 +479,81 @@ def test_timed_out_check_takes_its_tool_process_group_down(tmp_path, monkeypatch
         time.sleep(0.05)
     os.kill(pid, signal.SIGKILL)
     raise AssertionError("tool outlived its timed-out check")
+
+
+def test_skip_env_disables_named_checks_without_running_them(
+    fixture_repo, tmp_path, monkeypatch
+):
+    """A project whose tests run in CI only names the checks Phase 0 must not run."""
+    phase0 = load("phase0", "phase0.py")
+    out = tmp_path / "FACTS.md"
+    ran = []
+    setattr(
+        phase0,
+        "CHECKS",
+        [
+            ("c_pytest", fake_check(lambda w, b: ran.append("c_pytest") or "OK: ran")),
+            ("a_ruff", fake_check(lambda w, b: "OK: lint")),
+        ],
+    )
+    monkeypatch.setenv("HELMSMAN_PHASE0_SKIP", "c_pytest, h_mutation")
+    assert phase0.main([str(fixture_repo), str(out)]) == 0
+    text = out.read_text()
+    assert "## c_pytest\nSKIPPED: disabled by HELMSMAN_PHASE0_SKIP" in text
+    assert "OK: lint" in text
+    assert ran == []
+
+
+def test_held_lock_skips_heavy_checks_and_never_delays_fast_ones(
+    fixture_repo, tmp_path
+):
+    """Only pytest and mutation queue on the machine-wide lock."""
+    phase0 = load("phase0", "phase0.py")
+    out = tmp_path / "FACTS.md"
+    lock = tmp_path / "phase0.lock"
+    setattr(phase0, "LOCK_PATH", lock)
+    setattr(phase0, "LOCK_WAIT_S", 0)
+    setattr(
+        phase0,
+        "CHECKS",
+        [
+            ("c_pytest", fake_check(lambda w, b: "OK: tests")),
+            ("b_pyright", fake_check(lambda w, b: "OK: types")),
+            ("a_ruff", fake_check(lambda w, b: "OK: lint")),
+        ],
+    )
+    with open(lock, "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        assert phase0.main([str(fixture_repo), str(out)]) == 0
+    text = out.read_text()
+    assert text.split("## c_pytest\n")[1].startswith(
+        "SKIPPED: another Phase 0 run held"
+    )
+    assert "OK: types" in text
+    assert "OK: lint" in text
+    assert phase0.main([str(fixture_repo), str(out)]) == 0
+    assert "OK: tests" in out.read_text()
+
+
+def test_mutation_waits_for_fast_checks(fixture_repo, tmp_path):
+    """Mutation rewrites source files, so it never starts while a fast check still reads them."""
+    phase0 = load("phase0", "phase0.py")
+    out = tmp_path / "FACTS.md"
+    events = []
+
+    def slow_fast(w, b):
+        time.sleep(0.5)
+        events.append("fast done")
+        return "OK: lint"
+
+    def mutation(w, b):
+        events.append("mutation start")
+        return "OK: mutants"
+
+    setattr(
+        phase0,
+        "CHECKS",
+        [("a_ruff", fake_check(slow_fast)), ("h_mutation", fake_check(mutation))],
+    )
+    assert phase0.main([str(fixture_repo), str(out)]) == 0
+    assert events == ["fast done", "mutation start"]

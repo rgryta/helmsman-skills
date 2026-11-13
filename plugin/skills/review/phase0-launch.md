@@ -14,7 +14,11 @@ its own environment and says what to do while Phase 0 runs.
    command that goes where `pytest` would (it runs inside the project env,
    test paths appended); otherwise leave it unset. If the agent docs state
    a comment-density cap, set `HELMSMAN_COMMENT_DENSITY_CAP` to it as a
-   fraction (e.g. `0.1`).
+   fraction (e.g. `0.1`). If they say tests run in CI only, set
+   `HELMSMAN_PHASE0_SKIP=c_pytest,h_mutation` and let CI checks carry the
+   test verdict (`test-gate-exceptions.md`). Pytest and mutation
+   take one machine-wide lock, so a busy machine skips them rather than
+   running several suites at once.
 3. **Launch.** Run `python3 <skill-dir>/scripts/run_phase0.py
    <worktree> <outdir>/FACTS-<n>.md --base origin/<baseRefName>` (the PR's
    `baseRefName`) in a managed background Bash tool call and retain its task

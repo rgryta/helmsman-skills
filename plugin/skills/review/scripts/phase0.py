@@ -1,11 +1,19 @@
 import concurrent.futures
+import contextlib
+import fcntl
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SERIAL = {"h_mutation"}
+HEAVY = {"c_pytest", "h_mutation"}
+SKIP_ENV = "HELMSMAN_PHASE0_SKIP"
+LOCK_PATH = Path(
+    os.environ.get("HELMSMAN_PHASE0_LOCK", Path.home() / ".helmsman" / "phase0.lock")
+)
 CHECKS: list | None = None
 # a gate caller (fold-review) needs a real suite to finish where a review's
 # fact pass only needs it not to hang
@@ -13,6 +21,53 @@ PER_CHECK_S = int(os.environ.get("HELMSMAN_PHASE0_CHECK_S", "240"))
 GRACE_S = 5
 PARALLEL_BUDGET_S = PER_CHECK_S + 10
 SERIAL_BUDGET_S = PER_CHECK_S + 10
+# callers collect the whole run at 600 s
+LOCK_WAIT_S = max(0, 590 - PARALLEL_BUDGET_S - SERIAL_BUDGET_S)
+
+
+def _name(entry):
+    return entry[0] if isinstance(entry, tuple) else entry
+
+
+@contextlib.contextmanager
+def _heavy_lock():
+    """One heavy wave per machine: parallel sessions' suites turn load into flaky tests."""
+    try:
+        LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(LOCK_PATH, "a")
+    except OSError:
+        yield True
+        return
+    with handle:
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(1)
+        yield True
+
+
+def _run_heavy(entries, worktree, base, sections, injected, fast_wave):
+    if not entries:
+        return
+    with _heavy_lock() as held:
+        if not held:
+            for e in entries:
+                sections[_name(e)] = (
+                    f"SKIPPED: another Phase 0 run held the machine-wide heavy-check "
+                    f"lock ({LOCK_PATH}) for {LOCK_WAIT_S}s"
+                )
+            return
+        par = [e for e in entries if _name(e) not in SERIAL]
+        ser = [e for e in entries if _name(e) in SERIAL]
+        _run_wave(par, worktree, base, PARALLEL_BUDGET_S, sections, injected)
+        fast_wave.result()  # mutation rewrites source that fast checks read
+        _run_wave(ser, worktree, base, SERIAL_BUDGET_S, sections, injected)
 
 
 def _discover_names():
@@ -186,14 +241,20 @@ def main(argv):
         return 0
     injected = CHECKS is not None
     entries = _discover_names() if CHECKS is None else CHECKS
-    names = [n for n, _ in entries] if injected else list(entries)
-    par = [e for e in entries if (e[0] if injected else e) not in SERIAL]
-    ser = [e for e in entries if (e[0] if injected else e) in SERIAL]
-    sections = {}
+    names = [_name(e) for e in entries]
+    skip = {s.strip() for s in os.environ.get(SKIP_ENV, "").split(",") if s.strip()}
+    sections = {n: f"SKIPPED: disabled by {SKIP_ENV}" for n in names if n in skip}
+    entries = [e for e in entries if _name(e) not in skip]
+    fast = [e for e in entries if _name(e) not in HEAVY]
+    heavy = [e for e in entries if _name(e) in HEAVY]
     preexisting = _dirty(worktree) or set()
     try:
-        _run_wave(par, worktree, base, PARALLEL_BUDGET_S, sections, injected)
-        _run_wave(ser, worktree, base, SERIAL_BUDGET_S, sections, injected)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fast_wave = ex.submit(
+                _run_wave, fast, worktree, base, PARALLEL_BUDGET_S, sections, injected
+            )
+            _run_heavy(heavy, worktree, base, sections, injected, fast_wave)
+            fast_wave.result()
     except Exception as e:
         sections["_runner"] = f"ERROR: runner crashed ({type(e).__name__}: {e})"
         names.append("_runner")

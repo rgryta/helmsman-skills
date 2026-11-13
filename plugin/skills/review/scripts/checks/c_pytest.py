@@ -34,7 +34,9 @@ _INFRA_MARKERS = (
 _VENDORED_DIRS = frozenset(
     {".venv", "venv", "node_modules", "site-packages", ".tox", "build", "dist", ".git"}
 )
+_LOAD_MARKERS = ("HealthCheck.too_slow",)
 INFRA_UNAVAILABLE = "test runner infra unavailable"
+LOAD_INDUCED = "load-induced health check, infra not code"
 REFUSED_UNVERIFIED = "connection refused, infra or code unverified"
 
 
@@ -42,6 +44,8 @@ def _infra_kind(out):
     """A bare refusal can come from the code under test, so it never reads as runner infra."""
     if any(marker in out for marker in _INFRA_MARKERS):
         return INFRA_UNAVAILABLE
+    if any(marker in out for marker in _LOAD_MARKERS):
+        return LOAD_INDUCED
     if "Connection refused" in out:
         return REFUSED_UNVERIFIED
     return None
