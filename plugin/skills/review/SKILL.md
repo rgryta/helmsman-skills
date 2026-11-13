@@ -24,31 +24,50 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
 
 ## Steps
 
-1. **Preflight + fetch + worktree.** `gh auth status` first - if it fails,
-   stop and tell the user. Resolve owner/repo from the PR URL or the
-   checkout's `git remote get-url origin` (ask if ambiguous); pass
-   `-R <owner>/<repo>` on every gh call. `gh pr view <n> --json
-   title,body,files,commits,headRefName,baseRefName,state,headRefOid`;
-   capture the head SHA and `git fetch origin <baseRefName>` (a stack base
-   may not be local yet). From inside the repo's local checkout: `git worktree add
-   <repo>-worktrees/review-<n> <headRefOid>`; if the add fails (force-push
-   race), re-run `gh pr view` for a fresh headRefOid and retry once. For a
-   stack, batch all fetches/worktree adds in one Bash call sized as
-   `timeout: max(120000, 45000 * n_prs)` ms, capped at 600000 ms - never
-   request over 600000 ms for anything. When the formula would exceed the
-   cap (n_prs >= 14), split the work into multiple batched Bash calls of at
-   most 600000 ms each rather than backgrounding it. This setup covers every
-   PR in the stack before any dispatch. A stack's dispatch waves, Phase 0
-   ordering and per-PR mode ("one agent per PR") follow
+1. **Preflight + fetch + worktree.** Resolve owner/repo from the PR URL or
+   the checkout's `git remote get-url origin` (ask if ambiguous); pass
+   `-R <owner>/<repo>` on any later gh call. From inside the repo's local
+   checkout run `python3 <skill-dir>/scripts/setup_round.py --repo
+   <owner/repo> --pr <n> --tag <task-name>` (add `--base-dir <dir>` only to
+   move the ledger root, `--worktree <path>` only when the project's agent
+   docs place worktrees elsewhere). It runs `gh auth status`, `gh pr view`, fetches the
+   head (`pull/<n>/head`) and `baseRefName`, adds or reuses the detached
+   worktree `<repo>-worktrees/review-<n>` at `headRefOid` (re-viewing once on
+   a force-push race), takes a lease on it, creates this round's `<outdir>`
+   = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/run-<epoch>/`, prunes
+   this PR's older `run-*` directories (keeping the newest 3), runs step 2's
+   ledger calls, and prints ONE JSON object. Take `worktree`, `outdir`,
+   `head_sha`, `base_ref`, `mode`, `delta_since` and `pr_json` (title, body,
+   files, commits) from it - never rebuild them with shell strings. A
+   non-zero exit prints `{"ok": false, "error": ...}`: a `gh auth` failure
+   means stop and tell the user; exit 3 means another live session holds
+   the worktree's lease (`holder` names it) - never share or force it, stop
+   and report, unless `same_session` is true and the holder's task is no
+   longer running: then free it with `--release <worktree> --tag <holder
+   tag>` and rerun. A reused worktree with uncommitted tracked edits fails
+   setup; remove it and rerun. `--tag` (required) names this task, so two
+   tasks of one session (each a different subagent) cannot share a worktree; reuse the same tag when the
+   same task re-runs setup. For a stack, run it once per PR in one Bash call
+   sized as `timeout: max(120000, 45000 * n_prs)` ms, capped at 600000 ms -
+   never request over 600000 ms for anything. When the formula would exceed
+   the cap (n_prs >= 14), split the work into multiple batched Bash calls of
+   at most 600000 ms each rather than backgrounding it. This setup covers
+   every PR in the stack before any dispatch. A stack's dispatch waves,
+   Phase 0 ordering and per-PR mode ("one agent per PR") follow
    `<skill-dir>/../fold-review/stack-mode.md`; read it before step 3.
-   Then create this round's artifact directory OUTSIDE every repo:
-   `<outdir>` = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/run-<epoch>/`
-   via `mkdir -p`, with `<epoch>` from `date +%s`. Every artifact except the
-   final `REVIEW-PR-<n>.md` goes there, never into the worktree. A fresh
+   Manual fallback only if the script is missing: `gh pr view`, `git fetch
+   origin <baseRefName> pull/<n>/head`, `git worktree add --detach
+   <worktree> <headRefOid>`, `mkdir -p <outdir>` with `<epoch>` from `date
+   +%s`, then step 2 by hand. Every artifact except the final
+   `REVIEW-PR-<n>.md` goes in `<outdir>`, never into the worktree. A fresh
    directory per run keeps a previous round's findings file out of step 6's
    readiness check, which cannot tell one round's output from another's.
-2. **Ledger + mode.** Every `ledger.py` call requires `--repo <owner/repo>
-   --pr <n>` (argparse enforces them on every subcommand); later calls below
+2. **Ledger + mode.** `setup_round.py` already ran this step: its `mode`
+   is `full` or `delta` and `delta_since` the old SHA, with the ancestry
+   check and `round-start` done. Run the calls below by hand only in the
+   manual fallback, or to force full mode (external API shapes changed)
+   with a second `round-start --mode full`. Every `ledger.py` call requires
+   `--repo <owner/repo> --pr <n>` (argparse enforces them on every subcommand); later calls below
    omit them for brevity. `python3 <skill-dir>/scripts/ledger.py delta
    --repo <owner/repo> --pr <n> --sha <head>` -> `FULL_REHUNT` or
    `DELTA_SINCE <sha>`. Besides no rounds, last round not complete and last
@@ -208,10 +227,16 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    each surviving finding into the ledger (`ledger.py upsert ... --sha
    <head>`; re-confirmed old findings keep their id; fixed ones
    `set-status --status fixed`).
-9. **Cleanup, backgrounded, one call per worktree.** Each `git worktree
-   remove --force` goes in its own backgrounded Bash call so one hang never
-   blocks the others; never wait on it. Delete this round's `<outdir>` in
-   the same call - the ledger already holds everything durable.
+9. **Cleanup, backgrounded, one call per worktree.** Each worktree gets its
+   own backgrounded Bash call so one hang never blocks the others; never
+   wait on it. In it: `git worktree remove <worktree>` (no `--force`); only
+   if that fails, `git worktree remove --force <worktree>`; then delete this
+   round's `<outdir>` - the ledger already holds everything durable. Some
+   CLIs' command policies block `--force` removal and `rm -rf`; when a
+   removal fails for any reason, run `setup_round.py --release <worktree>
+   --tag <task-name>` so the lease does not outlive the round, and list
+   every leftover path in the final report - never skip it silently. A
+   leftover `<outdir>` is pruned by the next round's setup.
 
 ## --post mode
 
@@ -234,7 +259,8 @@ retry.
 
 End the reply with one line per step (per PR when reviewing a stack), each
 `ran` or `skipped: <reason>`:
-Phase 0, project, hunter, edge, landmine, citations check, ledger, post.
+Phase 0, project, hunter, edge, landmine, citations check, ledger, post,
+cleanup (`skipped:` names every leftover worktree or `<outdir>` path).
 
 ## Severity
 
