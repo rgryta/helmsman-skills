@@ -323,7 +323,8 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   `inline-mode.md` (already read per Flags above) for how every layer's
   dispatches run. Otherwise, dispatch, in ONE message, as `review`'s step 5
   does (the calls return at once; keep each task id, never name an agent or
-  collect it via SendMessage - the findings files are the only result):
+  collect it via SendMessage - the findings files are the only result;
+  per-CLI dispatch and collection in `../review/cli-notes.md`):
   - `../review/hunter.md` and `../review/edge.md` as two `Agent` calls on
     the same balanced model at medium effort resolved in step 3.
   - `landmine-review`, discovered the same way `review`'s step 5 Layer

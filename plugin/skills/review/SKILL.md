@@ -94,7 +94,8 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    says: keep each call's task id, never named, never collected via
    SendMessage relays or idle notifications - an idle notification is not a
    result. The findings files on disk are the only result, and step 6's
-   `await_layers.py` is the only collector.
+   `await_layers.py` is the only classifier of them. Per-CLI dispatch and
+   collection (Codex `fork_turns`, `wait_agent`): `<skill-dir>/cli-notes.md`.
    **Model and effort per layer**: `hunter` and `edge` follow
    `<skill-dir>/model-choice.md`; `project` and `landmine` get no override.
    - Layer `project`: first check

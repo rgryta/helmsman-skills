@@ -26,9 +26,16 @@ its own environment and says what to do while Phase 0 runs.
    `nohup` or `disown`. In Claude use a background Bash task; in Codex let
    the exec call yield a session ID without detaching the command inside the
    shell. `<skill-dir>` is the `review` skill's base dir.
-4. **Collect.** Collect that exact tool call to completion with a foreground
-   wait bounded at 600000 ms. Do not poll only for the facts file, because a
-   dead process can never satisfy that wait.
+4. **Collect.** Run `python3 <skill-dir>/scripts/await_phase0.py
+   <outdir>/FACTS-<n>.md` as a FOREGROUND Bash call with `timeout: 600000`
+   (default deadline 590s, poll 5s). Every writer renames the facts file
+   into place, so `READY` means complete. `MISSING` means `<outdir>` does
+   not exist - fix the path, never re-wait on it. Do not poll only for the
+   facts file: on `TIMEOUT`, check the retained tool call - still running,
+   run `await_phase0.py` once more; ended, go to step 5. Still running
+   after that second wait: stop the tool call and treat it as a Phase 0
+   failure (step 5). Never write
+   `sleep`, `pgrep` or `ps` loops, and never wait any other way.
 5. **Fallback.** A non-zero/terminated tool call, or a completed call with no
    facts file, is a Phase 0 failure: preserve its captured exit/signal and
    stderr in a one-line `<outdir>/FACTS-<n>.md` fallback if `run_phase0.py`

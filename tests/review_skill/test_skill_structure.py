@@ -500,3 +500,20 @@ def test_no_layer_offers_request_changes():
     """Every review verdict is approve or comment, never request-changes."""
     landmine = (SCRIPTS.parent.parent / "landmine-review" / "SKILL.md").read_text()
     assert "request-changes" not in landmine.lower()
+
+
+def test_waits_go_through_the_shipped_scripts():
+    """Phase 0 and Codex layers have a named collector, so no session improvises a sleep loop."""
+    launch = _flat(PHASE0_LAUNCH.read_text())
+    assert "await_phase0.py <outdir>/FACTS-<n>.md" in launch
+    assert "Never write `sleep`, `pgrep` or `ps` loops" in launch
+    notes = _flat((SCRIPTS.parent / "cli-notes.md").read_text())
+    assert 'fork_turns:"none"' in notes and "wait_agent" in notes
+    assert "dead at once" in notes
+    assert "then run `await_layers.py` once to classify" in notes
+    assert "until the script prints its `WAITED:` line" in notes
+    assert "Still running after that second wait: stop the tool call" in launch
+    assert "is the only collector" not in _flat(SKILL.read_text())
+    fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
+    assert "<skill-dir>/cli-notes.md" in SKILL.read_text()
+    assert "../review/cli-notes.md" in fold
