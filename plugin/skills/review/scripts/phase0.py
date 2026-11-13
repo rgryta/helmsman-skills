@@ -1,6 +1,7 @@
 import concurrent.futures
 import contextlib
 import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -13,6 +14,8 @@ HERE = Path(__file__).resolve().parent
 SERIAL = {"h_mutation"}
 HEAVY = {"c_pytest", "h_mutation"}
 SKIP_ENV = "HELMSMAN_PHASE0_SKIP"
+CLI_ENV = "HELMSMAN_CLI"
+MANIFEST = HERE.parents[2] / ".claude-plugin" / "plugin.json"
 LOCK_PATH = Path(
     os.environ.get("HELMSMAN_PHASE0_LOCK", Path.home() / ".helmsman" / "phase0.lock")
 )
@@ -54,7 +57,7 @@ def _heavy_lock():
         yield True
 
 
-def _run_heavy(entries, worktree, base, sections, injected, fast_wave):
+def _run_heavy(entries, worktree, base, sections, injected, fast_wave, routes):
     if not entries:
         return
     with _heavy_lock() as held:
@@ -67,9 +70,9 @@ def _run_heavy(entries, worktree, base, sections, injected, fast_wave):
             return
         par = [e for e in entries if _name(e) not in SERIAL]
         ser = [e for e in entries if _name(e) in SERIAL]
-        _run_wave(par, worktree, base, PARALLEL_BUDGET_S, sections, injected)
+        _run_wave(par, worktree, base, PARALLEL_BUDGET_S, sections, injected, routes)
         fast_wave.result()  # mutation rewrites source that fast checks read
-        _run_wave(ser, worktree, base, SERIAL_BUDGET_S, sections, injected)
+        _run_wave(ser, worktree, base, SERIAL_BUDGET_S, sections, injected, routes)
 
 
 def _discover_names():
@@ -177,9 +180,49 @@ def _repair_worktree(worktree, preexisting):
     return dirty, held, None
 
 
-def _run_subprocess_check(name, worktree, base):
+def _cli_path():
+    env = os.environ.get(CLI_ENV)
+    if env:
+        return None if env == "off" else Path(env)
+    try:
+        version = json.loads(MANIFEST.read_text())["version"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    exe = "helmsman.exe" if os.name == "nt" else "helmsman"
+    path = Path.home() / ".helmsman" / "bin" / version / exe
+    return path if path.is_file() else None
+
+
+def _cli_routes():
+    """Map each check the binary ports to the binary; any doubt runs it all in Python."""
+    cli = _cli_path()
+    if cli is None:
+        return {}
+    try:
+        r = subprocess.run(
+            [str(cli), "checks"], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        reason = f"{type(e).__name__}: {e}"
+    else:
+        if r.returncode == 0:
+            return {name: str(cli) for name in r.stdout.split()}
+        reason = f"`checks` exited {r.returncode}"
+    print(
+        f"NOTE: {cli} unusable ({reason}), running every check in Python",
+        file=sys.stderr,
+    )
+    return {}
+
+
+def _run_subprocess_check(name, worktree, base, cli=None):
+    argv = (
+        [cli, "check", name]
+        if cli
+        else [sys.executable, str(HERE / "checks" / f"{name}.py")]
+    )
     proc = subprocess.Popen(
-        [sys.executable, str(HERE / "checks" / f"{name}.py"), worktree, base],
+        [*argv, worktree, base],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -207,14 +250,16 @@ def _run_subprocess_check(name, worktree, base):
     return out or "ERROR: check produced no output"
 
 
-def _run_wave(entries, worktree, base, budget_s, sections, injected):
+def _run_wave(entries, worktree, base, budget_s, sections, injected, routes):
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=8)
     try:
         if injected:
             futs = {ex.submit(mod.run, worktree, base): name for name, mod in entries}
         else:
             futs = {
-                ex.submit(_run_subprocess_check, name, worktree, base): name
+                ex.submit(
+                    _run_subprocess_check, name, worktree, base, routes.get(name)
+                ): name
                 for name in entries
             }
         done, pending = concurrent.futures.wait(futs, timeout=budget_s)
@@ -255,13 +300,21 @@ def main(argv):
     entries = [e for e in entries if _name(e) not in skip]
     fast = [e for e in entries if _name(e) not in HEAVY]
     heavy = [e for e in entries if _name(e) in HEAVY]
+    routes = {} if injected else _cli_routes()
     preexisting = _dirty(worktree)
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fast_wave = ex.submit(
-                _run_wave, fast, worktree, base, PARALLEL_BUDGET_S, sections, injected
+                _run_wave,
+                fast,
+                worktree,
+                base,
+                PARALLEL_BUDGET_S,
+                sections,
+                injected,
+                routes,
             )
-            _run_heavy(heavy, worktree, base, sections, injected, fast_wave)
+            _run_heavy(heavy, worktree, base, sections, injected, fast_wave, routes)
             fast_wave.result()
     except Exception as e:
         sections["_runner"] = f"ERROR: runner crashed ({type(e).__name__}: {e})"

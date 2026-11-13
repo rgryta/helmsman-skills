@@ -506,7 +506,22 @@ def test_a_hand_resolved_merge_from_main_is_delta_hunted(env):
     (seed / "m.py").write_text("m = 1\n")
     commit_all(seed, "main moves")
     _git(seed, "checkout", "-q", "feat")
-    subprocess.run(["git", "merge", "-q", "main"], cwd=seed, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "merge",
+            "-q",
+            "--no-commit",
+            "--no-ff",
+            "main",
+        ],
+        cwd=seed,
+        capture_output=True,
+    )
     (seed / "a.py").write_text("x = 7\n")
     commit_all(seed, "merge main")
     head = _rev(seed)
