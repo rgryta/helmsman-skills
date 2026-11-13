@@ -175,6 +175,7 @@ def main(argv=None):
                 not rounds
                 or rounds[-1]["complete"] is not True
                 or rounds[-1].get("skipped_layers")
+                or rounds[-1].get("sha") == a.sha
             ):
                 print("FULL_REHUNT")
                 return 0

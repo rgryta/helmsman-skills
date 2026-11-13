@@ -146,13 +146,17 @@ def test_live_lease_held_by_another_session_blocks_setup(env):
     assert out["same_session"] is True
 
 
-def test_lease_being_written_is_not_stolen(env):
-    """A lease file that exists but is not yet readable belongs to a racing session, so setup loses instead of deleting it."""
+def test_empty_lease_left_by_a_crashed_writer_is_stale(env):
+    """Leases are linked into place whole, so an empty one is a crash leftover that neither setup nor release may trip on."""
     _, out = setup(env, tag="a")
-    Path(out["lease"]).write_text("")
+    lease = Path(out["lease"])
+    lease.write_text("")
     code, out = setup(env, tag="b")
-    assert code == 3, out
-    assert Path(out["worktree"], ".git").exists()
+    assert code == 0, out
+    assert json.loads(lease.read_text())["tag"] == "b"
+    lease.write_text("")
+    assert _release(out["worktree"], "c")["released"] is True
+    assert not lease.exists()
 
 
 @pytest.mark.parametrize("shell", ["sh", "bash"])
@@ -214,25 +218,29 @@ def test_stale_lease_is_taken_over(env):
     assert json.loads(Path(out["lease"]).read_text())["tag"] == "b"
 
 
-def test_release_drops_the_callers_lease(env):
-    """Release frees the worktree for another live session."""
-    _, out = setup(env, tag="a")
+def _release(worktree, tag):
     r = subprocess.run(
         [
             sys.executable,
             str(SCRIPTS / "setup_round.py"),
             "--release",
-            out["worktree"],
+            worktree,
             "--owner-pid",
             str(os.getpid()),
             "--tag",
-            "a",
+            tag,
         ],
         capture_output=True,
         text=True,
         timeout=30,
     )
-    assert json.loads(r.stdout)["released"] is True
+    return json.loads(r.stdout)
+
+
+def test_release_drops_the_callers_lease(env):
+    """Release frees the worktree for another live session."""
+    _, out = setup(env, tag="a")
+    assert _release(out["worktree"], "a")["released"] is True
     assert not Path(out["lease"]).exists()
     assert setup(env, tag="b")[0] == 0
 
@@ -402,4 +410,113 @@ def test_a_dropped_commit_forces_a_full_rehunt(env):
         "full",
         None,
         None,
+    )
+
+
+def _publish(env, head):
+    _git(env["origin"], "update-ref", f"refs/pull/{PR}/head", head)
+    view = json.loads(env["view"].read_text())
+    view["headRefOid"] = head
+    env["view"].write_text(json.dumps(view))
+
+
+def _force_push_amended_feat(env):
+    seed = env["seed"]
+    _git(seed, "checkout", "-q", "feat")
+    (seed / "a.py").write_text("x = 9\n")
+    _git(seed, "commit", "-q", "-a", "--amend", "-m", "change")
+    head = _rev(seed)
+    _git(seed, "checkout", "-q", "main")
+    _git(seed, "push", "-q", "-f", str(env["origin"]), "feat")
+    _publish(env, head)
+    return head
+
+
+def test_fold_after_a_force_push_resets_to_the_new_head(env):
+    """A clean fold worktree whose commits were all pushed follows a rewritten branch instead of failing the fast-forward."""
+    assert setup(env, "--fold")[0] == 0
+    head = _force_push_amended_feat(env)
+    code, out = setup(env, "--fold")
+    assert code == 0, out
+    assert out["pre_fold_sha"] == head
+
+
+@pytest.mark.parametrize("message", ["local only", "sync with origin/feat"])
+def test_fold_keeps_unpushed_commits_and_releases_its_lease(env, message):
+    """A local commit origin never had is not discarded, whatever its message says, and the failed setup leaves no lease behind."""
+    _, out = setup(env, "--fold")
+    worktree, lease = Path(out["worktree"]), Path(out["lease"])
+    (worktree / "d.py").write_text("d = 1\n")
+    commit_all(worktree, message)
+    local = _rev(worktree)
+    _force_push_amended_feat(env)
+    code, out = setup(env, "--fold")
+    assert code == 1
+    assert "never had" in out["error"]
+    assert _rev(worktree) == local
+    assert not lease.exists()
+    assert setup(env, "--fold", tag="b")[0] == 1
+
+
+def test_merging_main_into_the_pr_reanchors_instead_of_reviewing_main(env):
+    """A merge from the base keeps the old head as an ancestor, but main's commits are not the PR's work."""
+    _completed_first_round(env)
+    seed = env["seed"]
+    _git(seed, "checkout", "-q", "main")
+    for name in ("m1.py", "m2.py"):
+        (seed / name).write_text("m = 1\n")
+        commit_all(seed, name)
+    _git(seed, "checkout", "-q", "feat")
+    _git(seed, "merge", "-q", "--no-edit", "main")
+    head = _rev(seed)
+    _git(seed, "checkout", "-q", "main")
+    _git(seed, "push", "-q", str(env["origin"]), "main", "feat")
+    _publish(env, head)
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_commits"], out["revisit_files"]) == (
+        "rebase",
+        [],
+        [],
+    )
+
+
+def test_fresh_round_on_an_unchanged_head_hunts_in_full(env):
+    """Re-reviewing a head that already had a complete round never narrows to an empty delta."""
+    _completed_first_round(env)
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_since"]) == ("full", None)
+
+
+def test_fold_on_a_branch_checked_out_elsewhere_fails_with_json(env):
+    """A failed worktree add reports the git error as JSON instead of crashing on the missing worktree."""
+    _git(env["checkout"], "checkout", "-q", "feat")
+    code, out = setup(env, "--fold")
+    assert code == 1
+    assert out["ok"] is False
+    assert "worktree add" in out["error"]
+
+
+def test_a_hand_resolved_merge_from_main_is_delta_hunted(env):
+    """A conflict resolution inside a merge from the base is new code, so the merge and its file are reviewed."""
+    _completed_first_round(env)
+    seed = env["seed"]
+    (seed / "a.py").write_text("x = 5\n")
+    (seed / "m.py").write_text("m = 1\n")
+    commit_all(seed, "main moves")
+    _git(seed, "checkout", "-q", "feat")
+    subprocess.run(["git", "merge", "-q", "main"], cwd=seed, capture_output=True)
+    (seed / "a.py").write_text("x = 7\n")
+    commit_all(seed, "merge main")
+    head = _rev(seed)
+    _git(seed, "checkout", "-q", "main")
+    _git(seed, "push", "-q", str(env["origin"]), "main", "feat")
+    _publish(env, head)
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_commits"], out["revisit_files"]) == (
+        "delta",
+        [head],
+        ["a.py"],
     )

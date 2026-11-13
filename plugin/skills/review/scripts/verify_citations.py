@@ -26,8 +26,8 @@ def _tracked(root):
             ["git", "ls-files"], cwd=root, capture_output=True, text=True, timeout=60
         )
     except OSError:
-        return []
-    return r.stdout.splitlines() if r.returncode == 0 else []
+        return None
+    return r.stdout.splitlines() if r.returncode == 0 else None
 
 
 def resolve(root, path, tracked):
@@ -88,6 +88,9 @@ def main(argv):
         return 2
     worktree, files = argv[0], argv[1:]
     tracked = _tracked(worktree)
+    if tracked is None:
+        print(f"NOT_A_WORKTREE: {worktree}")
+        return 2
     exts = {Path(t).suffix for t in tracked}
     refs = []
     unreadable = []

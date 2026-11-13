@@ -129,6 +129,13 @@ def test_delta_mode_rules(tmp_path):
     assert "FULL_REHUNT" in led(tmp_path, "delta", "--sha", "ddd").stdout
 
 
+def test_fresh_round_on_an_unchanged_head_is_a_full_rehunt(tmp_path):
+    """A delta against the head itself is empty, so a re-review of an unchanged PR hunts everything."""
+    led(tmp_path, "round-start", "--sha", "aaa")
+    led(tmp_path, "round-end", "--sha", "aaa", "--complete")
+    assert led(tmp_path, "delta", "--sha", "aaa").stdout.strip() == "FULL_REHUNT"
+
+
 def test_round_with_skipped_layers_forces_full_rehunt(tmp_path):
     """A complete round that skipped layers must not let the next round narrow to a delta."""
     led(tmp_path, "round-start", "--sha", "aaa")
