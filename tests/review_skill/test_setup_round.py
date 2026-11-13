@@ -265,3 +265,141 @@ def test_fold_mode_checks_out_the_branch(env):
         text=True,
     ).stdout.strip()
     assert branch == "feat"
+
+
+def _rev(repo, ref="HEAD"):
+    return subprocess.run(
+        ["git", "rev-parse", ref], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _republish(env, rewrite=None, extra=None):
+    """Move main on, rebase the PR branch onto it (optionally rewriting or adding a commit), publish the new head."""
+    seed = env["seed"]
+    (seed / "b.py").write_text("y = 1\n")
+    commit_all(seed, "main moves")
+    _git(seed, "checkout", "-q", "feat")
+    _git(seed, "rebase", "-q", "main")
+    if rewrite:
+        (seed / "a.py").write_text(rewrite)
+        _git(seed, "commit", "-q", "-a", "--amend", "-m", "change")
+    if extra:
+        (seed / "c.py").write_text(extra)
+        commit_all(seed, "more")
+    head = _rev(seed)
+    _git(seed, "checkout", "-q", "main")
+    _git(seed, "push", "-q", "-f", str(env["origin"]), "main", "feat")
+    _git(env["origin"], "update-ref", f"refs/pull/{PR}/head", head)
+    view = json.loads(env["view"].read_text())
+    view["headRefOid"] = head
+    env["view"].write_text(json.dumps(view))
+    return head
+
+
+def _completed_first_round(env):
+    assert setup(env)[0] == 0
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "ledger.py"),
+            "round-end",
+            "--repo",
+            "o/r",
+            "--pr",
+            str(PR),
+            "--dir",
+            str(env["base"]),
+            "--sha",
+            env["head"],
+            "--complete",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_a_pure_rebase_reanchors_instead_of_rehunting(env):
+    """Every commit's patch survived the rebase, so no layer needs to run again."""
+    _completed_first_round(env)
+    _republish(env)
+    code, out = setup(env)
+    assert code == 0, out
+    assert (
+        out["mode"],
+        out["delta_since"],
+        out["delta_commits"],
+        out["revisit_files"],
+    ) == ("rebase", env["head"], [], [])
+
+
+def test_a_rebase_plus_new_commit_hunts_only_the_new_commit(env):
+    """Reused patches keep their findings; only the commit with a new patch is hunted."""
+    _completed_first_round(env)
+    head = _republish(env, extra="z = 3\n")
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_commits"], out["revisit_files"]) == (
+        "delta",
+        [head],
+        [],
+    )
+
+
+def test_a_rewritten_commit_after_rebase_is_delta_hunted(env):
+    """An amended patch is new work even though the branch was also rebased."""
+    _completed_first_round(env)
+    head = _republish(env, rewrite="x = 3\n")
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_commits"], out["revisit_files"]) == (
+        "delta",
+        [head],
+        ["a.py"],
+    )
+
+
+def test_a_dropped_commit_plus_a_new_one_revisits_the_dropped_files(env):
+    """Code lost with a dropped commit is re-read even when the push also adds work."""
+    _completed_first_round(env)
+    seed = env["seed"]
+    (seed / "b.py").write_text("y = 1\n")
+    commit_all(seed, "main moves")
+    _git(seed, "checkout", "-q", "-B", "feat", "main")
+    (seed / "c.py").write_text("z = 3\n")
+    commit_all(seed, "more")
+    head = _rev(seed)
+    _git(seed, "checkout", "-q", "main")
+    _git(seed, "push", "-q", "-f", str(env["origin"]), "main", "feat")
+    _git(env["origin"], "update-ref", f"refs/pull/{PR}/head", head)
+    view = json.loads(env["view"].read_text())
+    view["headRefOid"] = head
+    env["view"].write_text(json.dumps(view))
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_commits"], out["revisit_files"]) == (
+        "delta",
+        [head],
+        ["a.py"],
+    )
+
+
+def test_a_dropped_commit_forces_a_full_rehunt(env):
+    """Removed work can strand findings the delta would never look at again."""
+    _completed_first_round(env)
+    (env["seed"] / "b.py").write_text("y = 1\n")
+    commit_all(env["seed"], "main moves")
+    _git(env["seed"], "checkout", "-q", "-B", "feat", "main")
+    head = _rev(env["seed"])
+    _git(env["seed"], "checkout", "-q", "main")
+    _git(env["seed"], "push", "-q", "-f", str(env["origin"]), "main", "feat")
+    _git(env["origin"], "update-ref", f"refs/pull/{PR}/head", head)
+    view = json.loads(env["view"].read_text())
+    view["headRefOid"] = head
+    env["view"].write_text(json.dumps(view))
+    code, out = setup(env)
+    assert code == 0, out
+    assert (out["mode"], out["delta_since"], out["delta_commits"]) == (
+        "full",
+        None,
+        None,
+    )
