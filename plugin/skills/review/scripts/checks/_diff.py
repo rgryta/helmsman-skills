@@ -4,6 +4,29 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
+import threading
+
+CHECK_BUDGET_S = int(os.environ.get("HELMSMAN_PHASE0_CHECK_S", "240")) - 20
+
+
+def _exit_on_signal(signum, _frame):
+    sys.exit(128 + signum)
+
+
+# tools run in their own session, so a SIGTERM aimed at this check must unwind run_cmd to reach them
+if (
+    threading.current_thread() is threading.main_thread()
+    and signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+):
+    signal.signal(signal.SIGTERM, _exit_on_signal)
+
+
+def _kill_group(proc):
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.communicate(timeout=5)
 
 
 def run_cmd(args, cwd, timeout):
@@ -25,11 +48,11 @@ def run_cmd(args, cwd, timeout):
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         # a runner's own children (uv's pytest, a parallel harness's workers) outlive a plain kill
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.communicate(timeout=5)
+        _kill_group(proc)
         return -1, "TIMEOUT"
+    except BaseException:
+        _kill_group(proc)
+        raise
     out = stdout.strip()
     return proc.returncode, out if out else stderr.strip()
 

@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 
-from .conftest import SCRIPTS
+from .conftest import SCRIPTS, commit_all
 
 
 def load(name: str, rel: str):
@@ -219,8 +219,9 @@ def test_repair_worktree_restores_dirty_tracked_files(fixture_repo):
     target = fixture_repo / "pkg" / "mod.py"
     original = target.read_text()
     target.write_text(original + "\n# corrupted\n")
-    dirty, held = phase0._repair_worktree(str(fixture_repo), set())
+    dirty, held, error = phase0._repair_worktree(str(fixture_repo), set())
     assert dirty == ["pkg/mod.py"]
+    assert error is None
     assert target.read_text() == original
 
 
@@ -356,3 +357,124 @@ def test_a_check_killed_on_its_own_budget_reads_as_a_timeout_not_a_crash(
     out = phase0._run_subprocess_check("slow", str(fixture_repo), "origin/main")
     assert out == "SKIPPED: check timed out"
     assert "crashed" not in out
+
+
+def test_repair_handles_spaced_paths_and_renames(fixture_repo):
+    """Porcelain paths with spaces and both sides of a rename are restored to HEAD."""
+    phase0 = load("phase0", "phase0.py")
+    spaced = fixture_repo / "pkg" / "a b.py"
+    spaced.write_text("x = 1\n")
+    commit_all(fixture_repo, "spaced")
+    plain = fixture_repo / "pkg" / "mod.py"
+    original = plain.read_text()
+    spaced.write_text("x = 2\n")
+    plain.write_text(original + "# dirty\n")
+    subprocess.run(
+        ["git", "mv", "pkg/__init__.py", "pkg/moved.py"],
+        cwd=fixture_repo,
+        check=True,
+        capture_output=True,
+    )
+    assert phase0._dirty(str(fixture_repo)) == {
+        "pkg/a b.py",
+        "pkg/mod.py",
+        "pkg/__init__.py",
+        "pkg/moved.py",
+    }
+    dirty, held, error = phase0._repair_worktree(str(fixture_repo), set())
+    assert error is None
+    assert len(dirty) == 4 and held == []
+    assert spaced.read_text() == "x = 1\n"
+    assert plain.read_text() == original
+    assert (fixture_repo / "pkg" / "__init__.py").exists()
+    assert not (fixture_repo / "pkg" / "moved.py").exists()
+    assert phase0._dirty(str(fixture_repo)) == set()
+
+
+def test_repair_treats_glob_characters_literally(fixture_repo):
+    """A dirtied path like `[ab].py` must not restore a held `a.py` it would match as a glob."""
+    phase0 = load("phase0", "phase0.py")
+    held_file = fixture_repo / "a.py"
+    glob_file = fixture_repo / "[ab].py"
+    held_file.write_text("x = 1\n")
+    glob_file.write_text("y = 1\n")
+    commit_all(fixture_repo, "glob names")
+    held_file.write_text("x = 2\n")
+    preexisting = phase0._dirty(str(fixture_repo))
+    glob_file.write_text("y = 2\n")
+    dirty, held, error = phase0._repair_worktree(str(fixture_repo), preexisting)
+    assert (dirty, held, error) == (["[ab].py"], ["a.py"], None)
+    assert held_file.read_text() == "x = 2\n"
+    assert glob_file.read_text() == "y = 1\n"
+
+
+def test_failed_restore_is_an_error_section_not_a_claimed_restore(
+    fixture_repo, tmp_path, monkeypatch
+):
+    """A restore that fails must never be reported as restored to HEAD."""
+    phase0 = load("phase0", "phase0.py")
+    out = tmp_path / "FACTS.md"
+    setattr(phase0, "CHECKS", [("okcheck", fake_check(lambda w, b: "OK: fine"))])
+    monkeypatch.setattr(
+        phase0,
+        "_repair_worktree",
+        lambda w, p: (["pkg/a b.py"], [], "exit 128: fatal: boom"),
+    )
+    assert phase0.main([str(fixture_repo), str(out)]) == 0
+    section = out.read_text().split("## _worktree_repair\n")[1]
+    assert section.startswith("ERROR: worktree restore failed (exit 128: fatal: boom)")
+    assert "pkg/a b.py" in section
+    assert "restored to HEAD" not in section
+
+
+def test_base_ref_argument_is_used_and_an_unknown_one_is_unresolved(
+    fixture_repo, tmp_path
+):
+    """An explicit base ref is honoured; without one the remote default is tried."""
+    phase0 = load("phase0", "phase0.py")
+    setattr(phase0, "CHECKS", [("okcheck", fake_check(lambda w, b: "OK: fine"))])
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/release", "HEAD"],
+        cwd=fixture_repo,
+        check=True,
+    )
+    out = tmp_path / "FACTS.md"
+    assert phase0.main([str(fixture_repo), str(out), "origin/release"]) == 0
+    assert "from origin/release)" in out.read_text().splitlines()[0]
+    assert phase0.main([str(fixture_repo), str(out)]) == 0
+    assert "from origin/main)" in out.read_text().splitlines()[0]
+    assert phase0.main([str(fixture_repo), str(out), "origin/nope"]) == 0
+    assert "merge-base vs origin/nope" in out.read_text()
+
+
+def test_timed_out_check_takes_its_tool_process_group_down(tmp_path, monkeypatch):
+    """A check killed on its budget must not leave the tool it started running."""
+    phase0 = load("phase0", "phase0.py")
+    checks_dir = tmp_path / "checks"
+    checks_dir.mkdir()
+    shutil.copy(SCRIPTS / "checks" / "_diff.py", checks_dir / "_diff.py")
+    tool_pid = tmp_path / "tool.pid"
+    tool = (
+        f"import os, pathlib, time; "
+        f"pathlib.Path({str(tool_pid)!r}).write_text(str(os.getpid())); time.sleep(60)"
+    )
+    (checks_dir / "hangs.py").write_text(
+        "import sys\n"
+        "import _diff\n"
+        f"_diff.run_cmd([{sys.executable!r}, '-c', {tool!r}], cwd='.', timeout=60)\n"
+    )
+    monkeypatch.setattr(phase0, "HERE", tmp_path)
+    monkeypatch.setattr(phase0, "PER_CHECK_S", 5)
+    assert phase0._run_subprocess_check("hangs", str(tmp_path), "HEAD") == (
+        "SKIPPED: check timed out"
+    )
+    pid = int(tool_pid.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    os.kill(pid, signal.SIGKILL)
+    raise AssertionError("tool outlived its timed-out check")

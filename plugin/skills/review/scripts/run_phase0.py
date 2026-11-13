@@ -1,3 +1,4 @@
+import argparse
 import os
 import signal
 import subprocess
@@ -69,10 +70,15 @@ def _tee(stream, sink, tail):
 
 
 def main(argv):
-    if len(argv) < 2:
-        print("usage: run_phase0.py <worktree> <out_file>", file=sys.stderr)
-        return 2
-    worktree, out_file = argv[0], Path(argv[1])
+    parser = argparse.ArgumentParser(prog="run_phase0.py")
+    parser.add_argument("worktree")
+    parser.add_argument("out_file", type=Path)
+    parser.add_argument(
+        "--base", help="ref the PR merges into, e.g. origin/<baseRefName>"
+    )
+    args = parser.parse_args(argv)
+    worktree, out_file = args.worktree, args.out_file
+    base_ref = [args.base] if args.base else []
     proc_ref = []
     received_signal = []
 
@@ -90,7 +96,7 @@ def main(argv):
         signal.signal(signum, _forward_signal)
     try:
         proc = subprocess.Popen(
-            [sys.executable, str(PHASE0), worktree, str(out_file)],
+            [sys.executable, str(PHASE0), worktree, str(out_file), *base_ref],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

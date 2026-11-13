@@ -446,5 +446,5 @@ def test_both_skills_warn_before_launching_phase0_on_uncommitted_work():
     fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
     for text in (SKILL.read_text().split("4. **Context pack")[0], fold):
         flat = _flat(text)
-        assert "git checkout --" in flat and "unrecoverable" in flat
+        assert "git restore" in flat and "unrecoverable" in flat
         assert "COMMIT FIRST" in flat or "Commit before you launch it" in flat

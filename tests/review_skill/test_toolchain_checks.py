@@ -716,7 +716,7 @@ def test_run_cmd_timeout_kills_the_runners_own_children(tmp_path, monkeypatch):
     pid_file = tmp_path / "child.pid"
     _shim(bin_dir, "spawner", f"#!/bin/sh\nsleep 30 &\necho $! > {pid_file}\nwait\n")
     d = load("_diff", "checks/_diff.py")
-    assert d.run_cmd(["spawner"], str(tmp_path), 1) == (-1, "TIMEOUT")
+    assert d.run_cmd(["spawner"], str(tmp_path), 3) == (-1, "TIMEOUT")
     child = int(pid_file.read_text())
     assert _gone_within(child, seconds=5)
 

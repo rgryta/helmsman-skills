@@ -17,7 +17,7 @@ def run(worktree, base):
         code, out = _diff.run_cmd(
             [*tool, "check", "--force-exclude", "--output-format=concise", *files],
             cwd=worktree,
-            timeout=240,
+            timeout=_diff.CHECK_BUDGET_S,
         )
         if code == -2:
             continue

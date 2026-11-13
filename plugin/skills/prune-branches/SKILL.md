@@ -1,13 +1,13 @@
 ---
 name: prune-branches
-description: Audit local git branches, show status table, prune merged/stale branches, and optionally rebase stale-but-active branches onto current origin/main
+description: Audit local git branches, show status table, prune merged/stale branches, and optionally rebase stale-but-active branches onto the remote's current default branch
 argument-hint: "[repo-path]"
 allowed-tools: Bash, Read, Edit, Write
 ---
 
 # prune-branches
 
-Audit local git branches against their remote and PR status. Clean up merged/stale branches, and optionally rebase stale-but-active branches onto current `origin/main` in dedicated worktrees.
+Audit local git branches against their remote and PR status. Clean up merged/stale branches, and optionally rebase stale-but-active branches onto the remote's current default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`, below `<default>`) in dedicated worktrees.
 
 ## Usage
 
@@ -41,7 +41,7 @@ When this skill is invoked:
    - **Needs attention:** diverged from remote, or PR is CLOSED (not merged)
    - **Active:** PR is OPEN
    - **Orphan:** no remote, no PR — ask user before deleting
-   - **Stale-but-active:** OPEN PR but `git merge-base origin/main <branch>` returns nothing (history-disjoint, e.g. after a force-rewrite of main) — flag for the rebase workflow below
+   - **Stale-but-active:** OPEN PR but `git merge-base <default> <branch>` returns nothing (history-disjoint, e.g. after a force-rewrite of main) — flag for the rebase workflow below
 
 6. **Ask the user** what to prune. Suggest the safe-to-delete set. Do not delete anything without confirmation.
 
@@ -56,14 +56,14 @@ When this skill is invoked:
 ## Rebasing stale-but-active branches
 
 When the user asks to rebase the remaining (typically OPEN-PR) branches onto
-current `origin/main`, hand off to a rebase skill if one is installed —
+current `<default>`, hand off to a rebase skill if one is installed —
 it owns dependency ordering, history-disjoint cherry-picking, and conflict
 triage (additive / migration-numbering / rename-delete / structural-stop).
 Otherwise rebase each branch yourself in that order, stopping on any
 structural conflict. Two notes specific to this audit context:
 
 - If local main diverged drastically from origin (force-rewrite), confirm with
-  the user before `git reset --hard origin/main` — it discards local commits.
+  the user before `git reset --hard <default>` — it discards local commits.
 - Prefer rebasing into dedicated worktrees on `<branch>-rebased` names so the
   originals stay untouched until reviewed; don't push (pushing is a per-PR
   judgment call for the user).

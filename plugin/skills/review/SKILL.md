@@ -26,8 +26,9 @@ touches GitHub. `--post` additionally posts ONE batched review.
    stop and tell the user. Resolve owner/repo from the PR URL or the
    checkout's `git remote get-url origin` (ask if ambiguous); pass
    `-R <owner>/<repo>` on every gh call. `gh pr view <n> --json
-   title,body,files,commits,headRefName,state,headRefOid`; capture the head
-   SHA. From inside the repo's local checkout: `git worktree add
+   title,body,files,commits,headRefName,baseRefName,state,headRefOid`;
+   capture the head SHA and `git fetch origin <baseRefName>` (a stack base
+   may not be local yet). From inside the repo's local checkout: `git worktree add
    <repo>-worktrees/review-<n> <headRefOid>`; if the add fails (force-push
    race), re-run `gh pr view` for a fresh headRefOid and retry once. For a
    stack, batch all fetches/worktree adds in one Bash call sized as
@@ -70,12 +71,13 @@ touches GitHub. `--post` additionally posts ONE batched review.
    a FULL_REHUNT verdict (including a periodic one), or `--mode delta`
    after DELTA_SINCE, before dispatch.
 3. **Phase 0 (deterministic, local, no CI dependency).** COMMIT FIRST:
-   Phase 0 repairs a worktree a check dirtied by running `git checkout --`
+   Phase 0 repairs a worktree a check dirtied by running `git restore`
    on it, which is unrecoverable. It now spares files that were already
    modified when it started, but anything that becomes dirty WHILE it runs
    is reverted, so uncommitted work in the target worktree is not safe
    while Phase 0 is running. Launch `python3
-   <skill-dir>/scripts/run_phase0.py <worktree> <outdir>/FACTS-<n>.md` in a
+   <skill-dir>/scripts/run_phase0.py <worktree> <outdir>/FACTS-<n>.md
+   --base origin/<baseRefName>` (the PR's `baseRefName`) in a
    managed background Bash tool call and retain its task or session handle.
    The tool call owns the process: never append `&`, `nohup` or `disown` to
    the shell command. In Claude use a background Bash task; in Codex let the

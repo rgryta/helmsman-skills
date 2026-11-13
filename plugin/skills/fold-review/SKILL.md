@@ -64,7 +64,7 @@ resolution.
   needs owner/repo for thread resolution, step 8 needs the PR URL. Never
   guess a repo: derive `<n>` from the filename if it's shaped like
   `REVIEW-PR-<n>.md`; otherwise derive `<n>` and the PR from the containing
-  checkout's current branch (`gh pr view --json number,url,headRefName`); if
+  checkout's current branch (`gh pr view --json number,url,headRefName,baseRefName`); if
   that also fails, ask the user. Only then continue to step 2.
 - **PR number/link** - resolve owner/repo the same way `review` step 1 does:
   from a full PR URL directly, or for a bare number from the current
@@ -174,7 +174,8 @@ fixing, just fix and move on.
 
 Fetch the PR's head ref, then create a fresh worktree at
 `<repo>-worktrees/fold-<n>` checked out **on the actual branch, not detached
-HEAD** - e.g. `git fetch origin <headRefName>` followed by
+HEAD** - e.g. `git fetch origin <headRefName> <baseRefName>` (both from
+`gh pr view <n> --json headRefName,baseRefName`) followed by
 `git worktree add <repo>-worktrees/fold-<n> <headRefName>` (tracking the
 remote branch). This picks up anything that landed on the branch since the
 original review ran, and it's required for step 7's plain `git push` to
@@ -209,7 +210,7 @@ Skipped entirely if step 4 produced zero new local commits since
 report already covers rejected findings with reasons.
 
 **Facts first, unconditionally, and only after step 4's commits exist.**
-Phase 0 repairs a worktree a check dirtied by running `git checkout --` on
+Phase 0 repairs a worktree a check dirtied by running `git restore` on
 it, which is unrecoverable. It spares what was already modified when it
 started, but anything that becomes dirty WHILE it runs is reverted, and an
 uncommitted fold has been lost this way. Commit before you launch it. Launch
@@ -219,7 +220,8 @@ test runner (see the review skill's Phase 0): a review reads `c_pytest` as
 facts and can live with the tests named for the diff, but this is a gate before a push with no CI answer yet,
 so it runs every test directory holding one of those tests and gets a budget
 a real suite can finish inside. Run `python3 ../review/scripts/run_phase0.py
-<worktree> <outdir>/FACTS-<n>.md` (relative to this skill's base dir) in a
+<worktree> <outdir>/FACTS-<n>.md --base origin/<baseRefName>` (the PR's
+`baseRefName`; path relative to this skill's base dir) in a
 managed background Bash tool call and retain its task or session handle. The
 tool call owns the process: never append `&`, `nohup` or `disown`. In Claude
 use a background Bash task; in Codex let the exec call yield a session ID
