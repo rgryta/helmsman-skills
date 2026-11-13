@@ -251,6 +251,8 @@ Emoji: 🔴 blocker · 🟠 should-fix · 🟡 question · ⚪ nitpick.
 
 ## Verdict
 <approve / comment> — 🔴 N · 🟠 N · 🟡 N · ⚪ N
+
+Checked: <files, functions and paths you actually examined>
 ```
 
 ## Recurring landmines for THIS repo (prime on these)

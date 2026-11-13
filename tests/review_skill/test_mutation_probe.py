@@ -1,8 +1,10 @@
+import os
 import shutil
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -414,3 +416,45 @@ def test_a_timed_out_baseline_is_not_described_as_a_failing_suite(
     out = mod.run(str(fixture_repo), "origin/main")
     assert "pkg tests did not finish within" in out, out
     assert "exit -1" not in out
+
+
+def test_stop_handler_ignores_a_repeat_stop_during_restore():
+    """Once the stop handler fires, a second SIGTERM or SIGINT cannot interrupt the restore."""
+    mod = load("h_mutation", "checks/h_mutation.py")
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        with pytest.raises(mod._Terminated):
+            mod._raise_terminated(signal.SIGTERM, None)
+        assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+        assert signal.getsignal(signal.SIGINT) == signal.SIG_IGN
+    finally:
+        for s, handler in saved.items():
+            signal.signal(s, handler)
+
+
+def test_stop_arriving_mid_restore_still_leaves_the_file_whole(
+    fixture_repo, monkeypatch
+):
+    """A first SIGTERM landing during the write-back is held until the original bytes are on disk."""
+    mod_path = fixture_repo / "pkg" / "mod.py"
+    mod_path.write_text("def check_guard(n):\n    return n > 10\n")
+    commit_all(fixture_repo)
+    original = mod_path.read_bytes()
+    mod = load("h_mutation", "checks/h_mutation.py")
+    monkeypatch.setattr(mod, "_run_pkg_tests", lambda *a: 0)
+    real_write = Path.write_bytes
+
+    def write_then_stopped(self, data):
+        if data == original:
+            os.kill(os.getpid(), signal.SIGTERM)
+        return real_write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", write_then_stopped)
+    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        out = mod.run(str(fixture_repo), "origin/main")
+    finally:
+        for s, handler in saved.items():
+            signal.signal(s, handler)
+    assert mod_path.read_bytes() == original
+    assert "stopped early" in out

@@ -51,6 +51,7 @@ about the code rather than about its cost. Cite only positions you actually
 read - a line number you did not open is a fabrication even when the
 defect behind it is real. Verify each finding against the
 actual code once before reporting. No severity inflation; a question is a
-question. Write everything to <outdir>/REVIEW-<n>-hunter.md as your final
+question. End the body with a `Checked:` line naming the files, functions and paths you examined.
+Write everything to <outdir>/REVIEW-<n>-hunter.md as your final
 action; last non-blank line exactly COMPLETE, or PARTIAL: <reason> if you ran out of
 budget or access.

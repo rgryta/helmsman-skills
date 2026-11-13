@@ -9,7 +9,7 @@ from collections import deque
 from pathlib import Path
 
 PHASE0 = Path(__file__).with_name("phase0.py")
-SIGNAL_GRACE_S = 2
+SIGNAL_GRACE_S = 10
 
 
 def _write_atomic(path, text):
@@ -50,8 +50,9 @@ def _signal_group(pid, signum):
         pass
 
 
-def _stop_group(pid):
-    _signal_group(pid, signal.SIGTERM)
+def _stop_group(pid, already_signalled=False):
+    if not already_signalled:
+        _signal_group(pid, signal.SIGTERM)
     deadline = time.monotonic() + SIGNAL_GRACE_S
     while time.monotonic() < deadline:
         try:
@@ -120,7 +121,7 @@ def main(argv):
         stderr_thread.start()
         returncode = proc.wait()
         if received_signal or returncode != 0:
-            _stop_group(proc.pid)
+            _stop_group(proc.pid, already_signalled=bool(received_signal))
         stdout_thread.join()
         stderr_thread.join()
     finally:

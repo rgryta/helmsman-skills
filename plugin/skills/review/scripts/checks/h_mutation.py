@@ -33,7 +33,19 @@ class _Terminated(Exception):
 
 
 def _raise_terminated(signum, frame):
+    signal.signal(
+        signal.SIGTERM, signal.SIG_IGN
+    )  # a repeat stop must not interrupt the restore
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     raise _Terminated(f"signal {signum} received, restored and exiting")
+
+
+def _restore(path, data):
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    try:
+        path.write_bytes(data)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
 def _install_signal_handlers():
@@ -158,7 +170,7 @@ def run(worktree, base):
                     path.write_bytes("".join(lines).encode("utf-8"))
                     code = _run_pkg_tests(_diff, worktree, pkg_dir, python, left)
                 finally:
-                    path.write_bytes(orig_bytes)
+                    _restore(path, orig_bytes)
                 tried += 1
                 if code == 0:
                     survived.append(
