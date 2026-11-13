@@ -1,6 +1,6 @@
 {
   "name": "helmsman-skills",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "PR review, review-fold, CI triage, PR comment, branch-pruning and transcript-context skills.",
   "author": { "name": "Radosław Gryta", "url": "https://github.com/rgryta" },
   "license": "MIT"

@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Grep, Glob, Task, Write, Edit, Skill, Agent
 
 Fold PR review feedback back into fixes on the same PR: read the review
 content, write a fix spec, get the spec adversarially reviewed, implement,
-review the diff, gate, push, and resolve the addressed threads. Companion to
+push, review the diff, gate, and resolve the addressed threads. Companion to
 the `review` skill (which produces `REVIEW-PR-<n>.md`) - `review` finds
 problems, `fold-review` closes them out.
 
@@ -36,8 +36,8 @@ problems, `fold-review` closes them out.
 
 Accepts a local file path, or a PR number/link. Ticket-ID input is out of
 scope - no reliable ticket-to-PR mapping exists to query generically. Runs
-fully autonomously end to end: spec, spec review, implement, diff review,
-gate, push, resolve threads - no approval checkpoint before push, this is a
+fully autonomously end to end: spec, spec review, implement, push, diff
+review, gate, resolve threads - no approval checkpoint before push, this is a
 fold-in onto a PR the user explicitly asked to close out, not a new draft
 being opened. The one exception is step 7's reply comments on findings this
 diff did not fix: a comment posted as the user needs their explicit approval
@@ -207,7 +207,7 @@ HEAD** - e.g. `git fetch origin <headRefName> <baseRefName>` (both from
 `gh pr view <n> --json headRefName,baseRefName`) followed by
 `git worktree add <repo>-worktrees/fold-<n> <headRefName>` (tracking the
 remote branch). This picks up anything that landed on the branch since the
-original review ran, and it's required for step 7's plain `git push` to
+original review ran, and it's required for step 4's plain `git push` to
 work - a detached-HEAD worktree has no branch to push. If that branch is
 already checked out in another worktree, `git worktree add` will refuse -
 run `git worktree list` and either reuse the existing worktree or
@@ -231,6 +231,17 @@ locks in no behaviour, which is the single most common shape reviewers send
 back on a folded-in fix. Report the proof in step 8; if a test cannot be
 made to fail, say so rather than counting it as coverage.
 
+**Push before gating.** Run the format-and-lint pre-push step in
+`../review/conventions.md` (fold any fix into the commit), then push at
+once: `git push` (plain push suffices, since the worktree tracks the real
+branch and these are new commits on top of the existing tip). Steps 5-6
+gate the pushed head alongside CI; a gate failure becomes a follow-up fix
+commit, never a held push. If the push is rejected as non-fast-forward (the
+PR branch moved meanwhile), fetch the new tip, rebase the fold commits onto
+it, and retry once. Never `--force` or `--force-with-lease` here - this is
+someone else's open PR, not a scratch branch; a second rejection stops the
+flow (report, leave the worktree for inspection).
+
 ### 5. Review the diff
 
 Runs after Implement (step 4, local commits exist), before Gates (step 6).
@@ -243,9 +254,9 @@ Launch `python3 ../review/scripts/run_phase0.py` (relative to this skill's
 base dir) per `../review/phase0-launch.md` (commit first, test runner, managed background
 launch, bounded collect, fallback FACTS file; a failure there is "Phase 0
 unavailable"), with `HELMSMAN_PYTEST_SCOPE=gate
-HELMSMAN_PHASE0_CHECK_S=270` added to the environment: this is a gate before
-a push with no CI answer yet, so it runs every test directory holding one of
-the diff's tests, with a budget a real suite can finish inside. This single
+HELMSMAN_PHASE0_CHECK_S=270` added to the environment: this is a gate, so it
+runs every test directory holding one of the diff's tests, with a budget a
+real suite can finish inside. This single
 execution also serves step 6 (Gates)
 below - its `a_ruff`/`b_pyright`/`c_pytest` checks ARE the gates; nothing
 runs lint/typecheck/test twice.
@@ -329,13 +340,14 @@ blocking the fold entirely on tooling it doesn't own.
 `a_ruff`/`b_pyright`/`c_pytest` sections failing is a gate failure, and so is
 any of the three coming back as anything other than OK or FINDINGS - a check
 that crashed, timed out or skipped ran no gate at all, and no verdict is not
-a pass. Exception: the `c_pytest` infra-only skip in
-`../review/test-gate-exceptions.md` is not a gate failure; note it in step 8
-and continue. Otherwise say which check gave no verdict and why rather than
-pushing on it. One
-fix-and-rerun cycle over the full gate set on failure, not a separate retry
-per individual failing check - still failing, stop, report the failing gate
-output, leave the worktree in place for inspection, do not push. `phase0.py`
+a pass. Exceptions: the `c_pytest` infra-only skip and a test run CI
+carries, both in `../review/test-gate-exceptions.md`, are not gate failures;
+note them in step 8 and continue. Otherwise say which check gave no verdict
+and why rather than resolving threads on it. On failure, commit the fix as a
+follow-up commit, push it (step 4's push rules), and re-run the full gate set
+once, not a separate retry per failing check - still failing, stop, report
+the failing gate output, leave the worktree in place for inspection, and
+resolve no threads. `phase0.py`
 already does repo-correct diff-scoped discovery (e.g. a root pyright config
 that excludes one package while another stays in scope is respected
 automatically, since the check runs the repo's own configured tool rather
@@ -348,16 +360,10 @@ test commands - never assume another repo's toolchain. If none are
 discoverable even then, report that explicitly and proceed - blocking on an
 undiscoverable gate would stall this autonomous flow with no data to act on.
 
-### 7. Push, resolve, reply
+### 7. Push follow-ups, resolve, reply
 
-Push the branch (`git push` - plain push suffices, since the worktree tracks
-the real branch and these are new commits on top of the existing tip). If
-the push is rejected as non-fast-forward (the PR branch moved while steps
-4-6 were running), fetch the new tip, rebase the fold commits onto it,
-re-run the gates once more (step 6), and retry the push once. Never
-`--force` or `--force-with-lease` here - this is someone else's open PR, not
-a scratch branch; a second rejection stops the flow the same as a gate
-failure (report, leave the worktree for inspection).
+Commit and push whatever steps 5-6 folded in, with the same format-and-lint
+step and push rules as step 4.
 
 Then split the spec's findings by what this PR's own diff actually contains,
 because resolving a thread asserts that the diff addressed it:
@@ -437,7 +443,7 @@ the report exists.
 ### 8. Report
 
 One-line summary, diff stat, gate results (noting a `c_pytest` infra-only
-skip if the gate carve-out applied), the non-vacuous test proof from
+skip or CI carrying the test verdict, if either carve-out applied), the non-vacuous test proof from
 step 4 (which tests were reverted and confirmed failing, and any that could
 not be), whether `--inline` and/or `--skip-review` were in effect and what
 that skipped (step 3's spec review, step 5's full-tier dispatch, or the
@@ -471,10 +477,10 @@ review file.
   as dead, report PARTIAL, proceed; never silently accepted as clean.
 - Zero new local commits after step 4 - skip step 5 entirely.
 - Gate failure after the retry (step 6) - stop, report the failing gate
-  output, leave the worktree for inspection. Do not push.
-- Push rejected as non-fast-forward (step 7) - rebase onto the new tip,
-  re-gate, retry once; a second rejection stops the flow the same as a gate
-  failure. Never `--force`/`--force-with-lease` onto someone else's PR.
+  output, leave the worktree for inspection. The commits are already
+  pushed; resolve no threads.
+- Push rejected as non-fast-forward (step 4 or 7) - rebase onto the new tip,
+  retry once; a second rejection stops the flow. Never `--force`/`--force-with-lease` onto someone else's PR.
 - Thread-resolve failure (step 7) - reported, not fatal.
 - Reply body declined or unanswered (step 7) - the thread stays unresolved
   and unanswered, reported in step 8. Never post an unapproved body, and

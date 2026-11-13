@@ -68,6 +68,8 @@ The dev dependency group (pytest, pyyaml, semgrep) is installed by `uv run`.
 | `HELMSMAN_PHASE0_CHECK_S` | `240` | Seconds Phase 0 gives each check before killing it; checks budget their own work 20 s under it. |
 | `HELMSMAN_PYTEST_SCOPE` | `diff` | `diff` runs only tests named after changed modules; `gate` runs every test directory holding such a test. |
 | `HELMSMAN_PYTEST_RUNNER` | unset | Command to run in place of `pytest` (pytest arguments are appended), e.g. a parallel test harness. |
+| `HELMSMAN_PHASE0_SKIP` | unset | Comma-separated Phase 0 checks not to run, e.g. `c_pytest,h_mutation` for a project whose tests run in CI only. |
+| `HELMSMAN_PHASE0_LOCK` | `~/.helmsman/phase0.lock` | Machine-wide lock file Phase 0 holds while it runs pytest and mutation. |
 | `HELMSMAN_COMMENT_DENSITY_CAP` | `0.20` | Share of a file's added lines that may be comments before the comment-density check flags it. |
 | `UV_PROJECT_ENVIRONMENT` | `.venv` | Where the checks look for the reviewed repo's own Python environment. |
 

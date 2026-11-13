@@ -271,8 +271,9 @@ the recommendation line in REVIEW-PR-<n>.md exactly as to a posted verdict.
 - a round recorded PARTIAL, a FACTS file carrying an `ERROR:` section, or a
   gate section (`a_ruff`, `b_pyright`, `c_pytest`) that is neither OK nor
   FINDINGS -> COMMENT, because each leaves the Blocker count unknown rather
-  than zero. Exception: the `c_pytest` infra-only skip in
-  `<skill-dir>/test-gate-exceptions.md` does not force COMMENT by itself.
+  than zero. Exceptions: the `c_pytest` infra-only skip and a test run CI
+  carries, both in `<skill-dir>/test-gate-exceptions.md`, do not force
+  COMMENT by themselves.
 - an open question whose answer would change a severity -> COMMENT until it
   is answered
 - otherwise APPROVE; never REQUEST_CHANGES

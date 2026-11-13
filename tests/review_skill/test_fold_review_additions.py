@@ -79,7 +79,7 @@ def test_fold_review_sibling_sweep_starts_from_the_facts_section():
 
 
 def test_fold_review_gates_on_a_wider_pytest_scope_than_a_review():
-    """A gate runs before the push, so there is no CI answer to lean on."""
+    """A fold gate widens the test scope a review's fact pass uses."""
     text = " ".join(FOLD.read_text().split())
     assert "HELMSMAN_PYTEST_SCOPE=gate" in text
     assert "HELMSMAN_PHASE0_CHECK_S=270" in text
@@ -165,3 +165,18 @@ def test_fold_review_file_input_keeps_live_filters_and_reports_drops():
     assert "first comment's `createdAt`" in block
     assert "step 1 dropped for predating the review file" in block
     assert "in its own follow-up query" in block
+
+
+def test_fold_review_pushes_before_it_gates():
+    """The gate runs on the pushed head, so a failure is a follow-up commit, never a held push."""
+    text = FOLD.read_text()
+    assert text.index("**Push before gating.**") < text.index("### 5. Review the diff")
+    assert "never a held push" in " ".join(text.split())
+
+
+def test_ci_carries_a_local_test_run_that_gave_no_verdict():
+    """A local timeout or skip defers to green or pending CI; a local FAIL never does."""
+    block = " ".join((SCRIPTS.parent / "test-gate-exceptions.md").read_text().split())
+    assert "checks in `skipping`" in block and "do not count either way" in block
+    for token in ("gh pr checks", "`pass` or `pending`", "FAIL` always counts"):
+        assert token in block, token

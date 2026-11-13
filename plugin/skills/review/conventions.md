@@ -17,3 +17,11 @@ rule wherever it states one.
 - **Comment density.** Default: Phase 0's `d_comment_density` cap of 20%
   comment lines over added code; a project's own cap reaches Phase 0 via
   `phase0-launch.md` step 2.
+- **Tests in CI only.** Default: Phase 0 runs the diff's tests locally. A
+  project whose agent docs say tests run in CI only skips them via
+  `phase0-launch.md` step 2.
+- **Format and lint before every push.** Run what the repo's CI runs (its
+  workflow, pre-commit or pyproject config), e.g. `ruff format` +
+  `ruff check` on the changed files, scoped the way CI scopes them. Seconds,
+  not minutes, and never skipped. CI lints whole touched files, so a
+  violation already in a file you touched fails the push too.

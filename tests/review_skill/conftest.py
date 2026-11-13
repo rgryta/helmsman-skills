@@ -9,11 +9,18 @@ SCRIPTS = (
 
 
 @pytest.fixture(autouse=True)
+def _phase0_lock_in_tmp(monkeypatch, tmp_path):
+    """The machine-wide heavy-check lock must never be a real one under the home dir."""
+    monkeypatch.setenv("HELMSMAN_PHASE0_LOCK", str(tmp_path / "phase0.lock"))
+
+
+@pytest.fixture(autouse=True)
 def _no_inherited_phase0_env(monkeypatch):
     """Phase 0 gating this repo exports these, and a test must not inherit its scope."""
     monkeypatch.delenv("HELMSMAN_PYTEST_SCOPE", raising=False)
     monkeypatch.delenv("HELMSMAN_PHASE0_CHECK_S", raising=False)
     monkeypatch.delenv("HELMSMAN_PYTEST_RUNNER", raising=False)
+    monkeypatch.delenv("HELMSMAN_PHASE0_SKIP", raising=False)
 
 
 def _git(repo: Path, *args: str) -> None:

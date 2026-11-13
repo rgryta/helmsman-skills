@@ -21,9 +21,9 @@ current one's output exists. Track phases with the task tools.
 ## Human involvement — build the whole chain, then push drafts (no approval gate)
 Run Phases 0→4 **autonomously** and do NOT stop for approval of the specs, the PR
 split, the design, or the push. **Draft PRs are pre-authorized** by this pipeline: build
-**every** unit in worktrees, pass all gates (Phase 3), self-review, then **push the
-branches and open the PRs as drafts yourself** — there is no "ready-to-push" gate and no
-waiting. Do NOT stop half-built to ask which option the user prefers; build the full
+**every** unit in worktrees, **push the branches and open the PRs as drafts yourself**
+as each is committed (Phase 3), then review them (Phase 4) — there is no "ready-to-push"
+gate and no waiting. Do NOT stop half-built to ask which option the user prefers; build the full
 chain first. After pushing, report per branch: a one-line summary, the diff stat, the
 gate results (the project's lint/type/test gates), and (if any PRs stack) the merge order.
 
@@ -162,15 +162,15 @@ One worktree + one draft PR per spec. Branch off `origin/main`.
 - **Delegate the bulk** of a large PR to an implementation subagent suited to
   the repository language, with the spec +
   the exact template/seam + the gotchas below; then YOU verify gates, review the
-  diff, and commit locally. Subagents must NOT commit. Build and commit **all**
-  units locally first, run Phase 4, then push the branches and open **draft** PRs
-  yourself (see "Human involvement" — drafts are pre-authorized; no gate). Do not
-  stop half-built to ask the user which unit to build or whether to push.
-- **Gates before every commit** (from the worktree): the project's own
-  test, format, lint and type-check gates (the new tests + the suite for any
-  touched shared file — a full registry/stack test, not just your new file).
-  For a Python project that might be `uv run pytest`, `uvx ruff format` +
-  `uvx ruff check`, `uv run pyright --level error`. All clean.
+  diff, and commit locally. Subagents must NOT commit. Push each branch and open
+  its **draft** PR right after its commit (see "Human involvement" — drafts are
+  pre-authorized; no gate), then run Phase 4 over all of them. Do not stop
+  half-built to ask the user which unit to build or whether to push.
+- **Before every push** (from the worktree): the format-and-lint step in
+  `../review/conventions.md`, plus the project's type-check (e.g. `uv run
+  pyright --level error`) and the unit's new tests only. The suite runs in CI
+  and in Phase 4's Phase 0 on the pushed head, never as a per-commit local
+  run; a failure there becomes a follow-up fix commit, never a held push.
   - **New-test regression proof**: for every NEW test added as part of this
     implementation (not pre-existing tests already in the suite): capture the
     production-code hunk the test is meant to cover (`git diff -- <changed-file>

@@ -90,7 +90,9 @@ a diagnosis when a failure is real instead of blindly rerunning.
      report it red with the fix, don't paper over it. When the user does ask
      and the failure is unrelated to the PR's diff (it fails the same way on
      the base branch), the fix goes on its own branch in its own worktree off
-     the base, as its own PR - never onto the PR being watched.
+     the base, as its own PR - never onto the PR being watched. Any code fix
+     runs the format-and-lint step in `../review/conventions.md` before its
+     push.
    - A check is stuck `PENDING` > 30 min → check whether the run is queued
      behind runner capacity vs genuinely hung; report which.
 

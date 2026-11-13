@@ -180,6 +180,60 @@ def test_pytest_bare_connection_refused_is_not_runner_infra(
     assert "test runner infra unavailable" not in out
 
 
+def test_pytest_hypothesis_health_check_is_load_not_a_failure(
+    fixture_repo, tmp_path, monkeypatch
+):
+    """A too-slow health check under machine load is a skipped run, never a FAIL."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git_shim = bin_dir / "git"
+    git_shim.write_text("#!/bin/sh\necho pkg/mod.py\n")
+    git_shim.chmod(0o755)
+    sh_real = shutil.which("sh")
+    if sh_real:
+        (bin_dir / "sh").symlink_to(sh_real)
+    fake_pytest = bin_dir / "pytest"
+    fake_pytest.write_text(
+        "#!/bin/sh\n"
+        "echo 'hypothesis.errors.FailedHealthCheck: Data generation is extremely slow'\n"
+        "echo 'add HealthCheck.too_slow to the suppress_health_check settings'\n"
+        "exit 1\n"
+    )
+    fake_pytest.chmod(0o755)
+    (fixture_repo / "pkg" / "test_mod.py").write_text("def test_x():\n    pass\n")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    out = load("c_pytest", "checks/c_pytest.py").run(str(fixture_repo), "origin/main")
+    assert out.startswith("SKIPPED: 1 of 1 package(s) did not run")
+    assert "SKIPPED (load-induced health check, infra not code" in out
+    assert "FAIL" not in out
+
+
+def test_pytest_app_deadline_exceeded_stays_a_failure(
+    fixture_repo, tmp_path, monkeypatch
+):
+    """An app-level DeadlineExceeded is a real failure, never load-induced."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git_shim = bin_dir / "git"
+    git_shim.write_text("#!/bin/sh\necho pkg/mod.py\n")
+    git_shim.chmod(0o755)
+    sh_real = shutil.which("sh")
+    if sh_real:
+        (bin_dir / "sh").symlink_to(sh_real)
+    fake_pytest = bin_dir / "pytest"
+    fake_pytest.write_text(
+        "#!/bin/sh\n"
+        "echo 'google.api_core.exceptions.DeadlineExceeded: 504 Deadline Exceeded'\n"
+        "exit 1\n"
+    )
+    fake_pytest.chmod(0o755)
+    (fixture_repo / "pkg" / "test_mod.py").write_text("def test_x():\n    pass\n")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    out = load("c_pytest", "checks/c_pytest.py").run(str(fixture_repo), "origin/main")
+    assert "load-induced" not in out
+    assert "FAIL" in out
+
+
 @pytest.mark.skipif(
     not (shutil.which("pytest") or shutil.which("uv")), reason="no pytest and no uv"
 )
