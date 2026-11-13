@@ -164,6 +164,15 @@ def test_a_line_moved_within_a_file_is_not_a_twin(repo):
     assert "SHARED_CONSTANT_LINE = compute(A, B)" not in out
 
 
+def test_a_function_moved_to_another_file_is_not_a_twin(repo):
+    """A line the diff removes from one file and adds to another was moved, not left behind."""
+    moved = "def summarise(rows):\n    total = compute_the_total_value(rows)\n    return total\n"
+    seed(repo, {"pkg/a.py": "import os\n\n\n" + moved, "pkg/b.py": "import sys\n"})
+    change(repo, {"pkg/a.py": "import os\n", "pkg/b.py": "import sys\n\n\n" + moved})
+    out = check().run(str(repo), "origin/main")
+    assert "a line this diff removed still exists elsewhere" not in out
+
+
 def test_a_code_fragment_between_two_strings_is_not_read_as_a_literal():
     """Quote pairing: the span between one string's close and the next one's open is code."""
     line = '    spec = load("_diff", Path(__file__).parent / "_diff.py")'

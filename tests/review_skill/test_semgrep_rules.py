@@ -106,6 +106,63 @@ def test_broad_except_rule_ignores_reraise_but_still_catches_swallow(tmp_path):
         assert f'"line":{lineno},' not in r.stdout
 
 
+@pytest.mark.skipif(_semgrep_cmd() is None, reason="semgrep unavailable")
+def test_broad_except_rule_ignores_fail_closed_handlers_and_unrelated_names(
+    tmp_path,
+):
+    """A success check that fails closed, or a call merely containing a guard word, is not flagged; a fail-open False is."""
+    bait = tmp_path / "fail_closed_bait.py"
+    bait.write_text(
+        "def fail_closed():\n"
+        "    try:\n"
+        "        verify(sig)\n"
+        "        return True\n"
+        "    except Exception:\n"
+        "        return False\n"
+        "\n"
+        "def fail_closed_as():\n"
+        "    try:\n"
+        "        token.verify(sig)\n"
+        "        return True\n"
+        "    except Exception as e:\n"
+        "        log(e)\n"
+        "        return False\n"
+        "\n"
+        "def unrelated():\n"
+        "    try:\n"
+        "        draw_bitmask(img)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "\n"
+        "def swallowed_method():\n"
+        "    try:\n"
+        "        self.redact_fields(doc)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "\n"
+        "def is_blocked(req):\n"
+        "    try:\n"
+        "        return guard.check(req)\n"
+        "    except Exception:\n"
+        "        return False\n"
+    )
+    r = subprocess.run(
+        [
+            *_semgrep_cmd(),
+            "--config",
+            str(RULES / "broad-except-around-guard.yaml"),
+            "--json",
+            str(bait),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.stdout.count('"check_id"') == 2
+    assert '"line":23,' in r.stdout
+    assert '"line":29,' in r.stdout
+
+
 def test_check_module_contract(fixture_repo, monkeypatch):
     mod = load("g_semgrep", "checks/g_semgrep.py")
     monkeypatch.setattr(mod, "COMMUNITY_TIMEOUT_S", 5)

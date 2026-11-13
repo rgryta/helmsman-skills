@@ -20,7 +20,7 @@ NEGATION = re.compile(
 )
 
 
-CLAUSE_SPLIT = re.compile(r"(?<=[.;!?])\s+")
+CLAUSE_SPLIT = re.compile(r"(?<=[.;:!?])\s+|\s+[-\u2014]\s+")
 
 
 def _clause(line, pos):
@@ -35,13 +35,12 @@ def _clause(line, pos):
 def scan(text):
     hits, suppressed = [], []
     for lineno, line in enumerate(text.splitlines(), 1):
-        spans = [m.start() for mk in MARKERS for m in [mk.search(line)] if m]
+        spans = [m.start() for mk in MARKERS for m in mk.finditer(line)]
         if not spans:
             continue
-        pos = min(spans)
         entry = (lineno, line.strip()[:160])
-        negated = NEGATION.search(_clause(line, pos))
-        (suppressed if negated else hits).append(entry)
+        live = any(not NEGATION.search(_clause(line, pos)) for pos in spans)
+        (hits if live else suppressed).append(entry)
     return hits, suppressed
 
 

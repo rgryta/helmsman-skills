@@ -1,3 +1,5 @@
+import pytest
+
 from .test_phase0 import load
 
 BMAD_SHAPED = (
@@ -18,6 +20,24 @@ def test_real_fanout_clause_survives_unrelated_negations_on_the_same_line(
     assert fc.main([str(skill)]) == 0
     out = capsys.readouterr().out
     assert out.startswith("FANOUT: 1 dispatch marker(s)")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Do not use the Agent tool for setup. Spawn one subagent per file.",
+        "Do not use the Agent tool for setup; then spawn one subagent per file.",
+        "No need to ask first: dispatch an agent per layer.",
+        "Never stop early - spawn parallel subagents for each file.",
+    ],
+)
+def test_later_unnegated_dispatch_clause_is_fanout(tmp_path, capsys, line):
+    """Every marker on a line is classified in its own clause, so an earlier negated one cannot hide a live dispatch."""
+    fc = load("fanout_check", "fanout_check.py")
+    skill = tmp_path / "SKILL.md"
+    skill.write_text(line + "\n")
+    assert fc.main([str(skill)]) == 0
+    assert capsys.readouterr().out.startswith("FANOUT: 1 dispatch marker(s)")
 
 
 def test_negated_dispatch_prose_is_suppressed(tmp_path, capsys):

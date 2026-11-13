@@ -76,7 +76,7 @@ def _blocks(path, source, added):
             if len(kinds) != 1:
                 continue
             kind, lines = next(iter(kinds.items()))
-            fresh = [n for n in lines if added is None or n in added]
+            fresh = [n for n in lines if n in added]
             if not fresh:
                 continue
             out.append(
@@ -94,11 +94,18 @@ def run(worktree, base):
         return "OK: no python changes"
     added_by_path = _diff.added_lines_by_path(worktree, base, files)
     blocks = []
+    unknown = 0
     for f in files:
         path = Path(worktree, f)
+        added = added_by_path.get(f)
+        if added is None:
+            unknown += 1
+            continue
         if not path.exists():
             continue
-        blocks += _blocks(f, path.read_text(errors="replace"), added_by_path.get(f))
+        blocks += _blocks(f, path.read_text(errors="replace"), added)
+    if unknown:
+        blocks.append(f"SKIPPED: line provenance unknown for {unknown} file(s)")
     if not blocks:
         return f"OK: no one-sided clamp added on any parameter ({_SCOPE_NOTE})"
     shown = blocks[:MAX_BLOCKS]
