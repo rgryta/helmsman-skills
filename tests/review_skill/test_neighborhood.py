@@ -144,3 +144,12 @@ def test_no_python_changes_is_reported_ok(repo):
     commit_all(repo, "docs only")
     out = check().run(str(repo), base)
     assert out.startswith("OK:")
+
+
+def test_a_pure_rename_is_not_a_change(repo):
+    """A file moved without edits has no added lines, so nothing around it is mapped."""
+    base = commit_two(repo, BASE, WITH_GATE)
+    (repo / "pkg" / "svc.py").rename(repo / "pkg" / "moved.py")
+    commit_all(repo, "rename")
+    assert check().run(str(repo), "HEAD~1").startswith("OK:")
+    assert "audit@" in check().run(str(repo), base)

@@ -239,6 +239,16 @@ def test_corrupt_ledger_degrades_instead_of_traceback(tmp_path):
     assert data["findings"][0]["id"] == "f1"
 
 
+def test_corrupt_ledger_is_moved_aside_not_overwritten(tmp_path):
+    """An unparseable ledger keeps its bytes in a .corrupt-* file and the error is printed."""
+    (tmp_path / "o__r__pr7.json").write_text("{ broken")
+    result = led(tmp_path, "report")
+    assert result.returncode == 0
+    assert "unreadable" in result.stderr
+    aside = list(tmp_path.glob("o__r__pr7.json.corrupt-*"))
+    assert len(aside) == 1 and aside[0].read_text() == "{ broken"
+
+
 def test_classify_report(tmp_path):
     f1 = tmp_path / "a.md"
     f1.write_text("# findings\n- x\n\nCOMPLETE\n\n")

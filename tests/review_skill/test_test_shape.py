@@ -148,3 +148,11 @@ def test_findings_are_framed_as_candidates_not_defects(repo):
     )
     assert "CANDIDATE" in out
     assert "not a defect" in out
+
+
+def test_a_pure_rename_is_not_a_change(repo):
+    """A test file moved without edits has no touched test bodies."""
+    seed(repo, {"tests/test_x.py": "def test_nothing():\n    pass\n"})
+    (repo / "tests" / "test_x.py").rename(repo / "tests" / "test_y.py")
+    commit_all(repo, "rename")
+    assert check().run(str(repo), "origin/main").startswith("OK:")

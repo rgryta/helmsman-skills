@@ -24,8 +24,13 @@ def _load(p, a):
     if p.exists():
         try:
             return json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            aside = p.with_name(f"{p.name}.corrupt-{int(time.time())}")
+            os.replace(p, aside)
+            print(
+                f"ERROR: ledger {p} unreadable ({type(e).__name__}); moved to {aside}, starting fresh",
+                file=sys.stderr,
+            )
     return {"repo": a.repo, "pr": a.pr, "rounds": [], "findings": []}
 
 

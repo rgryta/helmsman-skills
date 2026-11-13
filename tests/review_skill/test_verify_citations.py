@@ -1,3 +1,4 @@
+from .conftest import _git, commit_all
 from .test_phase0 import load
 
 
@@ -74,3 +75,78 @@ def test_usage_error_without_arguments():
     """Too few arguments exits 2 rather than raising."""
     vc = load("verify_citations", "verify_citations.py")
     assert vc.main([]) == 2
+
+
+def test_top_level_file_citation_is_checked(tmp_path, capsys):
+    """A citation of a file in the repo root, with no directory, is still checked."""
+    vc = load("verify_citations", "verify_citations.py")
+    _git(tmp_path, "init", "-b", "main")
+    (tmp_path / "setup.py").write_text("a\n")
+    commit_all(tmp_path)
+    findings = tmp_path / "REVIEW-7-hunter.md"
+    findings.write_text("see setup.py:10\n")
+    assert vc.main([str(tmp_path), str(findings)]) == 0
+    assert "BAD setup.py:10 - file has only 1 lines" in capsys.readouterr().out
+
+
+def test_blob_urls_and_diff_prefixes_resolve(tmp_path, capsys):
+    """GitHub blob URLs and a/ b/ diff prefixes name the same worktree file."""
+    vc = load("verify_citations", "verify_citations.py")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "mod.py").write_text("a\nb\nc\n")
+    findings = tmp_path / "REVIEW-7-hunter.md"
+    findings.write_text(
+        "https://github.com/o/r/blob/abc123/pkg/mod.py#L2-L3\n"
+        "a/pkg/mod.py:1 and b/pkg/mod.py:3\n"
+    )
+    assert vc.main([str(tmp_path), str(findings)]) == 0
+    out = capsys.readouterr().out
+    assert "BAD" not in out
+    assert "ALL_CITATIONS_RESOLVE" in out
+
+
+def test_shortened_path_resolves_only_when_unique(tmp_path, capsys):
+    """A path suffix resolves against the one tracked file it names; two matches are ambiguous."""
+    vc = load("verify_citations", "verify_citations.py")
+    _git(tmp_path, "init", "-b", "main")
+    for d in ("src/pkg", "src/other"):
+        (tmp_path / d).mkdir(parents=True)
+    (tmp_path / "src/pkg/mod.py").write_text("a\nb\n")
+    (tmp_path / "src/pkg/util.py").write_text("a\n")
+    (tmp_path / "src/other/util.py").write_text("a\n")
+    commit_all(tmp_path)
+    findings = tmp_path / "REVIEW-7-hunter.md"
+    findings.write_text("pkg/mod.py:2 and mod.py:5 and util.py:1\n")
+    assert vc.main([str(tmp_path), str(findings)]) == 0
+    out = capsys.readouterr().out
+    assert "BAD pkg/mod.py" not in out
+    assert "BAD mod.py:5 - file has only 2 lines" in out
+    assert "BAD util.py:1 - ambiguous: suffix of 2 tracked files" in out
+
+
+def test_layer_file_without_citations_is_warned(tmp_path, capsys):
+    """A layer file citing nothing is called out rather than passing silently."""
+    vc = load("verify_citations", "verify_citations.py")
+    findings = tmp_path / "REVIEW-7-hunter.md"
+    findings.write_text("looks fine to me\n")
+    assert vc.main([str(tmp_path), str(findings)]) == 0
+    assert (
+        f"WARNING: {findings} cites no file:line - any findings in it are unanchored"
+        in capsys.readouterr().out
+    )
+
+
+def test_bare_host_and_port_is_not_a_citation(tmp_path, capsys):
+    """`example.com:8080` names a host, not a file, when the repo tracks no .com files."""
+    vc = load("verify_citations", "verify_citations.py")
+    _git(tmp_path, "init", "-b", "main")
+    (tmp_path / "setup.py").write_text("a\n")
+    commit_all(tmp_path)
+    findings = tmp_path / "REVIEW-7-hunter.md"
+    findings.write_text(
+        "reach example.com:8080 or localhost.localdomain:5432, see setup.py:1\n"
+    )
+    assert vc.main([str(tmp_path), str(findings)]) == 0
+    out = capsys.readouterr().out
+    assert "BAD" not in out
+    assert "CHECKED: 1 citation(s)" in out

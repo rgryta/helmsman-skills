@@ -256,6 +256,8 @@ touches GitHub. `--post` additionally posts ONE batched review.
    have reported real defects at fabricated line numbers, so a wrong
    citation is not by itself grounds to discard the finding; it is grounds
    to re-derive the location before it reaches the review.
+   A `WARNING` that a layer cites no file:line is expected when that layer
+   reports no findings.
    The `l_test_shape` FACTS section lists changed tests that can pass without
    the behaviour they name; combined with `h_mutation`'s surviving mutants it
    covers both halves of a weak test, the production side and the test side.
