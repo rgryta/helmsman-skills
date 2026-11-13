@@ -27,8 +27,9 @@ One shared rulebook, one place for the mechanics.
 
 ## Voice contract (comments authored as the user)
 
-Max 25 words. No em-dash, no semicolon, no emoji. State the defect and a
-concrete fix. Never blame a ticket or author - frame as a guard against a
+Max 25 words for replies (a review body and its inline findings, as `review
+--post` builds them, carry each finding in full). No em-dash, no semicolon,
+no emoji. State the defect and a concrete fix. Never blame a ticket or author - frame as a guard against a
 described failure. Use a style-rewrite tool when the environment provides one. Review
 verdicts are approve-with-comments or comment-only - never REQUEST_CHANGES.
 

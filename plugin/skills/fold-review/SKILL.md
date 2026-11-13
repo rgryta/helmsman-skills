@@ -164,35 +164,46 @@ Under `--skip-review`, follow `skip-review.md` (already read per Flags
 above) - this step is skipped entirely. Under `--inline`, follow
 `inline-mode.md` (already read per Flags above) for how this dispatch runs.
 
-Dispatch `../review/hunter.md` (relative to this skill's base dir) as a
-single foreground `Agent` call on a balanced coding/reasoning model at medium
-effort, `run_in_background` unset, not addressed by name afterward. Resolve
+Dispatch `../review/hunter.md` and `../review/edge.md` (relative to this
+skill's base dir) as two `Agent` calls in ONE message, each on a balanced
+coding/reasoning model at medium effort, collected the way `review`'s step 5
+and 6 collect layers: the calls return at once, so keep each task id, never
+address an agent by name or collect it via SendMessage, and read results only
+from disk. Resolve
 the override from the active CLI: for example, Claude Code `model: sonnet`;
 Codex `model: gpt-5.6-terra` with `reasoning_effort: medium`; or another CLI's
 current comparable balanced model, such as its Gemini Pro-tier model. Prefer
 the CLI's current stable alias, do not substitute an economy tier such as
 Haiku, Luna, Flash, or Mini, and inherit the session model with the fallback
-recorded when per-subagent overrides are unavailable. This is the same merged
-adversarial-reviewer prompt `review`'s own Layer 2 uses (blind reader +
-edge-case hunter + acceptance auditor in one dispatch), replacing the retired
+recorded when per-subagent overrides are unavailable. These are the same
+prompts `review`'s `hunter` layer (blind reader + acceptance auditor) and
+`edge` layer (boundaries and input shapes) use, replacing the retired
 `bmad-code-review` wrapper: `review` dropped it after an audit found it
 produced zero findings at 28% of the trio's cost, and that wrapping a
-fan-out skill in an `Agent` breaks completion routing. `hunter.md` is a flat
-prompt file, not a discoverable skill, so no fan-out check is needed for it
-specifically here (unlike `landmine-review` in step 5).
+fan-out skill in an `Agent` breaks completion routing. Both are flat
+prompt files, not discoverable skills, so no fan-out check is needed for
+them specifically here (unlike `landmine-review` in step 5).
 
 There is no diff yet at this point - this review runs pre-implementation,
-same as today. Adapt the dispatch prompt's "read CONTEXT/FACTS" preamble to:
-"Do NOT post anything to GitHub. Read `FOLD-PR-<n>-spec.md` and the original
-review content first (their actual absolute paths - you do not inherit the
-orchestrator's cwd). Apply the blind-reader, edge-case-hunter, and
-acceptance-auditor briefs to this spec text. Write findings to a scratch
-file, not `REVIEW-<n>-hunter.md` - that name is reserved for the diff-review
-step later in this flow." Step 4 cannot start until this call returns, so
-there is nothing else to overlap with.
+same as today. Create `<outdir>` (defined in step 4; `mkdir -p` there is then
+a no-op) before dispatching. Adapt the dispatch prompt's "read CONTEXT/FACTS"
+preamble to: "Do NOT post anything to GitHub. Read `FOLD-PR-<n>-spec.md` and
+the original review content first (their actual absolute paths - you do not
+inherit the orchestrator's cwd). Apply your briefs to this spec text. Write
+findings to `<outdir>/REVIEW-<n>-spec-<layer>.md`; last non-blank line
+exactly COMPLETE or PARTIAL: <reason>." The `-spec` infix keeps
+`REVIEW-<n>-<layer>.md` free for the diff review in step 5. Collect with
+`python3 ../review/scripts/await_layers.py <outdir> <n>-spec hunter,edge
+540 5` (foreground, timeout 600000); on `STALLED:`, one grace re-wait at 240s for
+the stalled layer alone, and a layer still stalled after that is stopped
+and reported in step 8 as a confidence ceiling, never retried. Step 4 cannot
+start until this wait returns, so there is nothing else to overlap with.
+If `await_layers.py` is missing, read each file after its task's completion
+notification instead.
 
-If `../review/hunter.md` doesn't exist (an out-of-date `review` install),
-report that explicitly and skip this review layer rather than blocking the
+If `../review/hunter.md` or `../review/edge.md` doesn't exist (an
+out-of-date `review` install), report that explicitly and skip the missing
+layer rather than blocking the
 autonomous flow on missing tooling - do not invent reviewer instructions to
 fall back to.
 
@@ -291,29 +302,30 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
 - **Full tier**, skipped under `--skip-review` unless a sensitive path is
   touched - write `<outdir>/CONTEXT-<n>.md` once (spec digest, finding list,
   touched-file map, head commit, FACTS location). Under `--inline`, follow
-  `inline-mode.md` (already read per Flags above) for how both layers'
-  dispatches run. Otherwise, dispatch, in ONE message,
-  foreground, `run_in_background` unset, never named/backgrounded:
-  - `../review/hunter.md` as `Agent` instructions on the same balanced model
-    at medium effort resolved in step 3.
+  `inline-mode.md` (already read per Flags above) for how every layer's
+  dispatches run. Otherwise, dispatch, in ONE message, as `review`'s step 5
+  does (the calls return at once; keep each task id, never name an agent or
+  collect it via SendMessage - the findings files are the only result):
+  - `../review/hunter.md` and `../review/edge.md` as two `Agent` calls on
+    the same balanced model at medium effort resolved in step 3.
   - `landmine-review`, discovered the same way `review`'s step 5 Layer
     `landmine` discovers it (an external skill - don't hardcode its path here), then `python3
     ../review/scripts/fanout_check.py <resolved-path>/SKILL.md`. A
     `FANOUT:` verdict means run its steps directly instead of wrapping it
     in an `Agent`; on `FLAT:`, dispatch its contents as `Agent`
     instructions, no `model` override.
-  Both prompts, with `<worktree>`, `<outdir>` and `<n>` resolved to actual
+  Every prompt, with `<worktree>`, `<outdir>` and `<n>` resolved to actual
   absolute paths (dispatched subagents inherit no cwd): "Do NOT post
   anything to GitHub. Read `<outdir>/CONTEXT-<n>.md` and
   `<outdir>/FACTS-<n>.md` first. Write findings to
   `<outdir>/REVIEW-<n>-<layer>.md`; last non-blank line exactly COMPLETE
   or PARTIAL: <reason>."
   Collect via `python3 ../review/scripts/await_layers.py <outdir> <n>
-  hunter,landmine 540 5` (foreground, timeout 600000). A `NO_OUTDIR:` line
+  hunter,edge,landmine 540 5` (foreground, timeout 600000). A `NO_OUTDIR:` line
   means the path never resolved - fix it and re-wait; retrying layers cannot
   help. On `STALLED:`, one
   grace re-wait for the stalled layer(s) alone at 240s before treating
-  either as dead - a slow layer is not a dead layer. If a redispatch does
+  any as dead - a slow layer is not a dead layer. If a redispatch does
   become necessary, stop the original agent first (two writers on one
   findings file race, and the file that survives is whichever finished
   last, not whichever is better).
@@ -332,8 +344,9 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   confidence ceiling in step 8, never silently treated as clean.
 
 `fanout_check.py` or `await_layers.py` missing (older `review` install) -
-degrade the full tier to a single foreground `hunter.md` dispatch only
-(skip `landmine-review`), and note the degradation in step 8, rather than
+degrade the full tier to `hunter.md` and `edge.md` dispatches only, read
+from their findings files after each task's completion notification (skip
+`landmine-review`), and note the degradation in step 8, rather than
 blocking the fold entirely on tooling it doesn't own.
 
 ### 6. Gates
@@ -482,8 +495,9 @@ review file.
   see an explicit ceiling, not silence. Gates (step 6) fall back to manual
   discovery-and-run in this case only.
 - `fanout_check.py` or `await_layers.py` missing (step 5, older `review`
-  install) - full tier degrades to a single foreground `hunter.md` dispatch
-  only, noted in step 8, rather than blocking the fold.
+  install) - full tier degrades to `hunter.md` and `edge.md`
+  dispatches only, each read from its file after the task's completion
+  notification, noted in step 8, rather than blocking the fold.
 - Diff-review dispatch STALLED past the 240s grace window (step 5) - treat
   as dead, report PARTIAL, proceed; never silently accepted as clean.
 - Zero new local commits after step 4 - skip step 5 entirely.

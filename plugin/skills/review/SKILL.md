@@ -104,7 +104,7 @@ touches GitHub. `--post` additionally posts ONE batched review.
    output, and the FACTS file location. Layer prompts put static skill text
    FIRST and PR-specific text LAST, and reference files by path - never
    paste the diff or a per-layer PR narrative into prompts.
-5. **Dispatch layers in ONE message, foreground.** Under `--skip-review`,
+5. **Dispatch layers in ONE message, in the background.** Under `--skip-review`,
    follow `skip-review.md` (already read per Flags above) - only `project`
    and `landmine` run this step. Under `--inline`, follow `inline-mode.md`
    (already read per Flags above) for how every layer in this step runs.
@@ -112,15 +112,16 @@ touches GitHub. `--post` additionally posts ONE batched review.
    the four layers below (two under `--skip-review`). For a stack, run steps 2-4 for every PR first
    (each is per-PR-scoped by `<n>` and cheap/local), then combine every
    PR's layers into that same single message - `n_prs * 4` parallel
-   foreground `Agent` calls (`n_prs * 2` under `--skip-review`, none under
+   `Agent` calls (`n_prs * 2` under `--skip-review`, none under
    `--inline`), never one wave per PR. Each dispatch prompt
    still resolves `<worktree>`, `<outdir>` and `<n>` to that PR's own
    absolute paths and number, so `REVIEW-<n>-<layer>.md` files never
-   collide across PRs in the stack. Parallel `Agent` calls, `run_in_background` unset, never named,
-   never collected via SendMessage relays - an idle notification is not a
-   result. If a layer must run backgrounded, collect it ONLY via its
-   task-notification, and before ever declaring a layer dead, read its
-   transcript/output tail - a slow layer is not a dead layer.
+   collide across PRs in the stack. The `Agent` calls return at once and
+   the layers finish later, so treat every layer as backgrounded whatever
+   `run_in_background` says: keep each call's task id, never named, never
+   collected via SendMessage relays or idle notifications - an idle
+   notification is not a result. The findings files on disk are the only
+   result, and step 6's `await_layers.py` is the only collector.
    **Model and effort per layer** (provisional pending measurement - the
    design spec's largest single dollar lever): dispatch `hunter` and `edge`
    on a balanced coding/reasoning model at medium effort. Resolve the actual
@@ -222,7 +223,7 @@ touches GitHub. `--post` additionally posts ONE batched review.
    classify-report --file <outdir>/REVIEW-<n>-<layer>.md`. Missing file or
    MALFORMED: under `--inline`, do not dispatch anything - rewrite it
    yourself once per `inline-mode.md`. Otherwise dispatch ONE fresh
-   foreground Agent for that layer whose sole
+   Agent for that layer (stop the original first, as above) whose sole
    instruction is to write the missing findings file (same layer
    instructions, same output path `<outdir>/REVIEW-<n>-<layer>.md`, last
    non-blank line exactly COMPLETE or PARTIAL: <reason>), then bound that wait the
@@ -300,7 +301,9 @@ RIGHT-side diff lines. Apply `## Verdict` below. The posted body carries
 every Blocker and Should-fix the file holds, each with its severity word - an
 inline comment is not a substitute, because the reader weighing the verdict
 reads the body, and a finding that appears only on a diff line was demoted a
-second time without anyone saying so. Nitpicks may stay inline. Post ONCE per pr-comments skill mechanics
+second time without anyone saying so. Nitpicks may stay inline. The
+pr-comments 25-word voice cap covers replies only; the review body and its
+inline findings carry each finding in full. Post ONCE per pr-comments skill mechanics
 (`--input <file>`). Batch any multi-PR thread lookups into a single
 `gh api graphql` call with aliases - never a sequential per-PR loop. Verify
 anchors landed; on an ambiguous POST, list existing reviews before any
@@ -325,6 +328,13 @@ as an outage. A finding with no consumer sentence is not graded yet.
 | Blockers | high | intolerable for the consumer |
 | Should-fix | medium | tolerable, still real |
 | Nitpicks | low | cosmetic, or nothing downstream can observe it |
+
+The `landmine` layer tags in six words; read them onto the three tiers as a
+starting grade, then re-rate like any other layer's: `blocker` -> Blockers,
+`should-fix` -> Should-fix, `landmine` -> Blockers or Should-fix by its blast
+radius, `bug-bait` -> Nitpicks (correct today, so no consumer sees it yet)
+unless the guard it leans on is already defeated, `worth confirming` -> Open
+questions or Decisions made, `nitpick` -> Nitpicks.
 
 **Disposition** is `this diff` when the change caused the defect or states
 the guarantee it breaks, and `pre-existing` when it neither caused nor

@@ -26,7 +26,7 @@ end and what its extreme member does here - a one-sided clamp is right
 whenever the other end is guaranteed elsewhere, so the answer is a sentence
 about that guarantee rather than a restatement of the row.
 
-**Boundary sweep (all three briefs, every new guard or gate)**: the
+**Boundary sweep (every new guard or gate)**: the
 defects that survive a review live at the seam between changed and
 unchanged code, so for each one enumerate, from the `i_neighborhood`
 section of FACTS plus your own reading: every shape its input can take

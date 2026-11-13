@@ -103,42 +103,48 @@ PR, ship one PR — do not manufacture a chain.
 
 ## Phase 2 — Adversarial spec review + fold-in
 Review the SPECS before any code. For each spec, dispatch `../review/hunter.md`
-(relative to this skill's base dir - `review` and `feature-pipeline` are
-sibling plugin skills) as a foreground `Agent` call on a balanced
-coding/reasoning model at medium effort. Resolve the override from the active
+and `../review/edge.md` (relative to this skill's base dir - `review` and
+`feature-pipeline` are sibling plugin skills) as two `Agent` calls,
+each on a balanced coding/reasoning model at medium effort. Resolve the override from the active
 CLI: for example, Claude Code `model: sonnet`; Codex `model: gpt-5.6-terra`
 with `reasoning_effort: medium`; or another CLI's current comparable balanced
 model, such as its Gemini Pro-tier model. Prefer the CLI's current stable
 alias, do not substitute an economy tier such as Haiku, Luna, Flash, or Mini,
 and inherit the session model with the fallback recorded when per-subagent
-overrides are unavailable. Keep `run_in_background` unset and do not address
-the agent by name afterward - this is the same merged
-adversarial-reviewer prompt `review` and `fold-review` already use. For N
-specs, dispatch N of these in ONE message (one per spec, all foreground) -
-nothing else in this phase proceeds until all return; a backgrounded or
-name-addressed dispatch here has repeatedly stalled in idle-notification
-limbo with no result ever routing back.
+overrides are unavailable. These are the same `hunter` and `edge` prompts
+`review` and `fold-review` already use, and they are collected the same way:
+the calls return at once, so keep each task id, never address an agent by
+name or collect it via SendMessage relays (idle notifications have stalled
+here with no result ever routing back), and read results only from disk. For
+N specs, dispatch 2N of these in ONE message (two per spec) - nothing else in
+this phase proceeds until all are collected. Delete any existing
+`<spec-dir>/REVIEW-<spec-stem>-{hunter,edge}.md` first: a previous round's
+file already ends in COMPLETE and would be collected as this round's result.
 
-Adapt `hunter.md`'s "read CONTEXT/FACTS" preamble per dispatch to: "Do NOT
+Adapt each prompt's "read CONTEXT/FACTS" preamble per dispatch to: "Do NOT
 post anything to GitHub. Read `<spec-path>` and the Phase 0 context notes
 first (their actual absolute paths - you do not inherit the orchestrator's
-cwd). Apply the blind-reader, edge-case-hunter, and acceptance-auditor
-briefs to this spec text, additionally grounded in the verified Phase 0
+cwd). Apply your briefs to this spec text, additionally grounded in the verified Phase 0
 facts so it flags fiction, not just style. Write findings to
-`<spec-path>.hunter-review.md` (same directory as the spec - project root,
-never a repo checkout)." Never a bare "scratch file" with an unresolved
+`<spec-dir>/REVIEW-<spec-stem>-<layer>.md` (same directory as the spec -
+project root, never a repo checkout); last non-blank line exactly COMPLETE
+or PARTIAL: <reason>." Then, per spec, run `python3
+../review/scripts/await_layers.py <spec-dir> <spec-stem> hunter,edge 540 5`
+(foreground, timeout 600000), with `<spec-stem>` the spec's filename minus
+`-spec.md`; on `STALLED:`, one grace re-wait at 240s for the stalled layer
+alone. Never a bare "scratch file" with an unresolved
 location: a layer told to write into a repo checkout can have its write denied outright and
 then read as a stalled layer with no findings ever recovered. Hunt:
 contradictions with ground truth, chain-safety holes ("would merging PRx
 actually regress?"), hand-waved "reuse the existing path" claims, missing
 failure modes, completeness ("does the set actually close the whole gap?").
 
-If `../review/hunter.md` doesn't exist (an out-of-date `review` install),
-report that explicitly and skip the layer for the affected spec(s) rather
+If `../review/hunter.md` or `../review/edge.md` doesn't exist (an
+out-of-date `review` install), report that explicitly and skip that layer for the affected spec(s) rather
 than blocking the pipeline on missing tooling - do not invent reviewer
-instructions to fall back to. If a foreground call comes back empty or
-erroring, treat that reviewer as absent and proceed on whichever specs did
-return findings rather than retrying.
+instructions to fall back to. A layer still stalled after its grace wait,
+or whose file is missing or erroring, is stopped and treated as absent:
+proceed on whichever specs did return findings rather than retrying.
 
 Fold every genuine finding back into the specs (rev the docs). This gate
 routinely catches wrong-template and wrong-seam assumptions that would cost a
