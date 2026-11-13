@@ -2,8 +2,10 @@ import concurrent.futures
 import contextlib
 import fcntl
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -137,6 +139,12 @@ def _repair_worktree(worktree, preexisting):
     Phase 0 started is left alone even though a check may also have touched
     it: uncommitted work is worth more than a clean fact run.
     """
+    if preexisting is None:
+        return (
+            [],
+            [],
+            "could not read git status before the checks ran, so nothing was restored",
+        )
     now = _dirty(worktree)
     if now is None:
         return [], [], "could not read git status after the checks ran"
@@ -247,7 +255,7 @@ def main(argv):
     entries = [e for e in entries if _name(e) not in skip]
     fast = [e for e in entries if _name(e) not in HEAVY]
     heavy = [e for e in entries if _name(e) in HEAVY]
-    preexisting = _dirty(worktree) or set()
+    preexisting = _dirty(worktree)
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fast_wave = ex.submit(
@@ -292,5 +300,20 @@ def main(argv):
     return 0
 
 
+def _exit_with_parent(poll_s=1.0):
+    """A SIGKILLed guard cannot forward anything, so its orphan stops itself."""
+    parent = os.getppid()
+
+    def watch():
+        while os.getppid() == parent:
+            time.sleep(poll_s)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(os.getpid(), signal.SIGTERM)
+        os._exit(128 + signal.SIGTERM)
+
+    threading.Thread(target=watch, daemon=True).start()
+
+
 if __name__ == "__main__":
+    _exit_with_parent()
     sys.exit(main(sys.argv[1:]))

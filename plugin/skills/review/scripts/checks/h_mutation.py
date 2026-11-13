@@ -51,7 +51,8 @@ def _mutants(src):
     for fn in [
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and GUARD.search(n.name)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and GUARD.search(n.name)
     ]:
         for node in ast.walk(fn):
             if (
@@ -77,7 +78,10 @@ def _mutants(src):
 
 
 def _run_pkg_tests(d, worktree, pkg_dir, python=None, timeout=PER_MUTANT_S):
-    for tool in _env.pytest_commands(worktree, pkg_dir, python):
+    for tool in [
+        *_env.project_runner_commands(worktree, pkg_dir),
+        *_env.pytest_commands(worktree, pkg_dir, python),
+    ]:
         code, out = d.run_cmd(
             [*tool, str(pkg_dir), "-q", "-x"], cwd=worktree, timeout=timeout
         )
@@ -97,6 +101,7 @@ def run(worktree, base):
     start = time.monotonic()
     survived, uncovered, inconclusive, no_pkg, tried = [], [], [], [], 0
     python, synced, stopped = None, False, ""
+    baselines, baseline_s, red = {}, {}, []
     try:
         for f in prod_files:
             path = Path(worktree, f)
@@ -119,8 +124,33 @@ def run(worktree, base):
                     )
                     synced = True
                 left = min(PER_MUTANT_S, BUDGET_S - (time.monotonic() - start))
-                if left < MIN_RUN_S:
+                if left < max(MIN_RUN_S, baseline_s.get(pkg_dir, 0)):
                     stopped = "check budget spent"
+                    break
+                if pkg_dir not in baselines:
+                    t0 = time.monotonic()
+                    baselines[pkg_dir] = _run_pkg_tests(
+                        _diff, worktree, pkg_dir, python, left
+                    )
+                    baseline_s[pkg_dir] = time.monotonic() - t0
+                    if baselines[pkg_dir] == -2:
+                        return "SKIPPED: pytest unavailable for mutation probe"
+                    if baselines[pkg_dir] not in (0, 5):
+                        outcome = (
+                            f"did not finish within {left:.0f}s"
+                            if baselines[pkg_dir] == -1
+                            else f"exit {baselines[pkg_dir]}"
+                        )
+                        red.append(
+                            f"\n- NOTE: {pkg_dir.relative_to(worktree)} tests {outcome} "
+                            "with no mutant, so a run under a mutant says nothing - "
+                            "its guards were not probed"
+                        )
+                    left = min(PER_MUTANT_S, BUDGET_S - (time.monotonic() - start))
+                    if left < max(MIN_RUN_S, baseline_s[pkg_dir]):
+                        stopped = "check budget spent"
+                        break
+                if baselines[pkg_dir] not in (0, 5):
                     break
                 lines = src.splitlines(keepends=True)
                 lines[lineno - 1] = new_line
@@ -149,14 +179,19 @@ def run(worktree, base):
     except _Terminated as e:
         stopped = str(e)
     notes = "".join(
-        [f"\n- NOTE: stopped early ({stopped}), results are partial" if stopped else ""]
+        red
+        + [
+            f"\n- NOTE: stopped early ({stopped}), results are partial"
+            if stopped
+            else ""
+        ]
         + [
             f"\n- NOTE: {f} has no owning package (pyproject.toml), so no test dir to run - not probed"
             for f in no_pkg
         ]
     )
     if not tried:
-        if no_pkg or stopped:
+        if no_pkg or stopped or red:
             return "SKIPPED: no mutant was run" + notes
         return "OK: no guard-like changed functions to probe"
     if survived or uncovered or inconclusive:

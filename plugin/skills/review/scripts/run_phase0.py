@@ -78,6 +78,7 @@ def main(argv):
     )
     args = parser.parse_args(argv)
     worktree, out_file = args.worktree, args.out_file
+    out_file.unlink(missing_ok=True)
     base_ref = [args.base] if args.base else []
     proc_ref = []
     received_signal = []
@@ -85,8 +86,8 @@ def main(argv):
     def _forward_signal(signum, _frame):
         if not received_signal:
             received_signal.append(signum)
-        if proc_ref:
-            _signal_group(proc_ref[0].pid, signum)
+        if proc_ref:  # checks restore their mutants on SIGTERM only
+            _signal_group(proc_ref[0].pid, signal.SIGTERM)
 
     handled = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGHUP"):
@@ -106,7 +107,7 @@ def main(argv):
         )
         proc_ref.append(proc)
         if received_signal:
-            _signal_group(proc.pid, received_signal[0])
+            _signal_group(proc.pid, signal.SIGTERM)
         stdout_tail = deque(maxlen=3)
         stderr_tail = deque(maxlen=3)
         stdout_thread = threading.Thread(

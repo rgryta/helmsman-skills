@@ -6,7 +6,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import _diff  # noqa: E402
 
-_VIOLATION_LINE = re.compile(r"^.+?:\d+:\d+: [A-Z]+\d+\b")
+_VIOLATION_LINE = re.compile(
+    r"^.+?:\d+:\d+: (?:[A-Z]+\d+\b|invalid-syntax:|SyntaxError:)"
+)
 
 
 def run(worktree, base):
