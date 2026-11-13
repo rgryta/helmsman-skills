@@ -14,9 +14,9 @@ a diagnosis when a failure is real instead of blindly rerunning.
 ## Usage
 
 ```
-/ci-green                       # PRs of the current branch / recently pushed branches
-/ci-green 10794 10822           # specific PRs
-/ci-green <actions run URL>     # one run, monitor + tally mode
+/helmsman-skills:ci-green                    # PRs of the current branch / recently pushed branches
+/helmsman-skills:ci-green 10794 10822        # specific PRs
+/helmsman-skills:ci-green <actions run URL>  # one run, monitor + tally mode
 ```
 
 ## Instructions
@@ -37,10 +37,14 @@ a diagnosis when a failure is real instead of blindly rerunning.
    needs these IDs.
 
 3. **Classify every non-green check before acting.**
-   - **Spot reclamation, not a failure:** conclusion `cancelled`, and the
-     job's failed-step log is empty - i.e.
-     `gh run view <run-id> --job <job-id> --log-failed` prints nothing (no
-     `##[error]` lines, no test output). Happens routinely to jobs on
+   - **Superseded, not a failure:** conclusion `cancelled` on a run whose
+     `headSha` (`gh run view <run-id> --json headSha`) is no longer the PR's
+     `headRefOid` - a concurrency group cancelled it for a newer push. Ignore
+     it; never rerun it.
+   - **Spot reclamation, not a failure:** conclusion `cancelled`, the run's
+     `headSha` is still the PR head, and the job's failed-step log is empty -
+     i.e. `gh run view <run-id> --job <job-id> --log-failed` prints nothing
+     (no `##[error]` lines, no test output). Happens routinely to jobs on
      preemptible/spot runners. Treat as rerun-eligible noise, never as a regression.
    - **Known flake shape:** an e2e/browser spec that failed on an unrelated
      diff, or a test that passed on the previous run of the same SHA. Rerun
@@ -59,15 +63,21 @@ a diagnosis when a failure is real instead of blindly rerunning.
 
 5. **Poll in the background.** Run the poll loop as a background Bash task
    with all output piped to a file in the scratchpad; check the file, don't
-   re-run ad-hoc status commands in the foreground. Poll every 60-120s.
+   re-run ad-hoc status commands in the foreground. Poll every 60-120s, at
+   job granularity (`gh run view <run-id> --json jobs`): as soon as one job
+   finishes failed, read its log right away with
+   `gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs` and classify it -
+   don't wait for the whole run to complete.
 
 6. **Flake tally mode** (single run URL, or a spec that failed twice): rerun
-   the failed subset up to 5 times, and after each run pull the job log and
-   grep the per-test markers and final summary line:
-   ```
-   gh run view <run-id> --log-failed | grep -E "✓|✘|passed|failed"
-   ```
-   Maintain a running tally per test - seeded with the ORIGINAL failing run,
+   the failed subset up to 5 times, and after each run pull the failed job's
+   log (`gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs`) and extract
+   the ids of the tests that failed in it - whatever the framework prints for
+   a failing test (pytest `FAILED <nodeid>`, Jest/Vitest `✕`/`FAIL`,
+   Playwright `✘`, Go `--- FAIL:`, the final summary line). A test id that
+   was failing before and is absent from a rerun's failures counts as a pass
+   only if that rerun's summary shows the job ran it. Maintain a running
+   tally per test - seeded with the ORIGINAL failing run,
    so "failed once, passed on rerun" reads 1 fail / 1 pass - and conclude
    flake (intermittent) vs regression (consistent).
 
@@ -77,7 +87,10 @@ a diagnosis when a failure is real instead of blindly rerunning.
      log, identify the failing test/step, and report a diagnosis with the log
      excerpt and a proposed fix. Do not fix code unless the user asks - when
      a check needs a code change, "green" is honestly unmet for that check:
-     report it red with the fix, don't paper over it.
+     report it red with the fix, don't paper over it. When the user does ask
+     and the failure is unrelated to the PR's diff (it fails the same way on
+     the base branch), the fix goes on its own branch in its own worktree off
+     the base, as its own PR - never onto the PR being watched.
    - A check is stuck `PENDING` > 30 min → check whether the run is queued
      behind runner capacity vs genuinely hung; report which.
 
@@ -86,8 +99,13 @@ a diagnosis when a failure is real instead of blindly rerunning.
 
 ## Common mistakes
 
+- Changing a PR's draft/ready state. Never - that is the author's call,
+  whatever the CI result.
+- Rerunning a run that a concurrency group cancelled for a newer push - it
+  tests a superseded SHA. Compare the run's `headSha` with the PR head first.
+
 - Treating a spot-cancelled job (preemptible/spot runner) as a real failure and debugging
-  it. Check for the empty failed-log first.
+  it. Check the head SHA, then the empty failed-log, first.
 - Rerunning the full suite "to be safe" - only ever `--failed`.
 - Rerunning a deterministic failure (format, lint, migration numbering) hoping
   it passes. It won't; diagnose it.

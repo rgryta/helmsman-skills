@@ -1,8 +1,8 @@
 ---
 name: feature-pipeline
 description: Use when shipping a non-trivial feature - work that spans multiple PRs, needs design before code, or arrives as "close the gap of X, Y, Z" / "build out ..." / "each piece its own PR". Not for one-line fixes.
-argument-hint: "[feature/goal description]"
-allowed-tools: Bash, Read, Grep, Glob, Write, Edit, Task, Skill, WebSearch, WebFetch
+argument-hint: "[feature/goal description] [--inline] [--skip-review]"
+allowed-tools: Bash, Read, Grep, Glob, Write, Edit, Task, Agent, Skill, WebSearch, WebFetch
 ---
 
 # feature-pipeline
@@ -11,6 +11,9 @@ Orchestrates a feature from a vague goal to reviewed, validated draft PRs. It is
 the connective tissue over existing skills (rtfc, a brainstorming/PRD skill
 if installed, review, fold-review, landmine-review) plus the repo-specific mechanics
 and gotchas that make a multi-PR effort actually land.
+
+`--inline` and `--skip-review` pass through unchanged to every
+`/helmsman-skills:review` and `/helmsman-skills:fold-review` call in Phase 4.
 
 Run the phases in order. Each phase has a gate: do not start the next until the
 current one's output exists. Track phases with the task tools.
@@ -44,7 +47,8 @@ For a one-line fix, skip this — just do it.
 ## Phase 0 — Gather context (never skip)
 Cast wide before writing anything. Pull from every source that exists, in
 parallel where possible:
-- **Conversation history** — invoke `rtfc` for prior decisions on the topic.
+- **Conversation history** — invoke `rtfc find the past session about <topic>`;
+  its search mode picks the best-matching session and extracts its decisions.
 - **Reference branches / prior PRs** — `git branch -a`, `gh pr list --search`,
   read any `[DO NOT MERGE - REFERENCE]` branches. Past attempts encode constraints.
 - **The project's issue tracker** — find the project/epic, list its issues,
