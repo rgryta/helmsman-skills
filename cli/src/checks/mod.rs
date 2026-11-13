@@ -3,10 +3,12 @@ pub type Check = fn(worktree: &str, base: &str) -> i32;
 
 mod d_comment_density;
 mod j_siblings;
+mod k_claims;
 
 pub const REGISTRY: &[(&str, Check)] = &[
     ("d_comment_density", d_comment_density::run),
     ("j_siblings", j_siblings::run),
+    ("k_claims", k_claims::run),
 ];
 
 pub fn find(name: &str) -> Option<Check> {

@@ -7,6 +7,8 @@ publish = false
 
 [dependencies]
 aho-corasick = "1.1.5"
+fancy-regex = "0.13"
+memchr = "2.7"
 rayon = "1.12.0"
 regex = "1.13.1"
 ruff_python_ast = { git = "https://github.com/astral-sh/ruff", tag = "0.17.3" }
