@@ -28,6 +28,17 @@ def _no_inherited_phase0_env(monkeypatch):
     monkeypatch.setenv("HELMSMAN_CLI", "off")
 
 
+@pytest.fixture(autouse=True)
+def _no_commit_signing(monkeypatch):
+    """A global commit.gpgsign makes every fixture commit call the signing agent, which fails under load."""
+    for i, (key, value) in enumerate(
+        (("commit.gpgsign", "false"), ("tag.gpgsign", "false"))
+    ):
+        monkeypatch.setenv(f"GIT_CONFIG_KEY_{i}", key)
+        monkeypatch.setenv(f"GIT_CONFIG_VALUE_{i}", value)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],

@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
 jobs:
   test:
     strategy:
@@ -17,6 +20,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: enable long git paths (windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - name: cargo fmt
         run: cargo fmt --manifest-path cli/Cargo.toml --check
       - name: cargo clippy

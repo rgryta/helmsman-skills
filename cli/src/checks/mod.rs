@@ -1,7 +1,9 @@
 /// Prints exactly what `checks/<name>.py <worktree> <base>` prints and returns its exit code.
 pub type Check = fn(worktree: &str, base: &str) -> i32;
 
-pub const REGISTRY: &[(&str, Check)] = &[];
+mod d_comment_density;
+
+pub const REGISTRY: &[(&str, Check)] = &[("d_comment_density", d_comment_density::run)];
 
 pub fn find(name: &str) -> Option<Check> {
     REGISTRY.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
