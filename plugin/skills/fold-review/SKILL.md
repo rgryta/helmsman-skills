@@ -476,9 +476,12 @@ flags, a limitation it removed). If the author is the gh user (`gh api user
 --jq .login`), rewrite only those lines and apply them with `gh pr edit <n>
 --body-file <outdir>/pr-body.md`; otherwise list them in step 8.
 
-**Ledger sync.** For every finding with a ledger id from step 2, `python3
-../review/scripts/ledger.py set-status --repo <owner/repo> --pr <n> --id
-<finding-id> --status <s>`: `fixed` when this diff fixed it and step 6's
+**Ledger sync.** Write one `{"id": <finding-id>, "status": <s>}` object per
+finding with a ledger id from step 2 into a JSON list at
+`<outdir>/statuses.json`, then make one call (flags literal, never through
+a shell variable - zsh does not word-split it): `python3
+../review/scripts/ledger.py set-status --repo <owner/repo> --pr <n>
+--from-json <outdir>/statuses.json`. Status: `fixed` when this diff fixed it and step 6's
 gate passed, `wontfix` when the spec rejected it, `regressed` when a fix
 does not hold. A finding whose fix lives in a different PR stays `open`
 until that PR lands, because the ledger tracks whether a finding is closed
