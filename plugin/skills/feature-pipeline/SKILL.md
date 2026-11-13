@@ -1,7 +1,7 @@
 ---
 name: feature-pipeline
 description: Use when shipping a non-trivial feature - work that spans multiple PRs, needs design before code, or arrives as "close the gap of X, Y, Z" / "build out ..." / "each piece its own PR". Not for one-line fixes.
-argument-hint: "[feature/goal description] [--inline] [--skip-review] [--post-replies]"
+argument-hint: "[feature/goal description] [--inline] [--skip-review] [--post-replies] [--max-prs <n>]"
 allowed-tools: Bash, Read, Grep, Glob, Write, Edit, Task, Agent, Skill, WebSearch, WebFetch
 ---
 
@@ -15,6 +15,8 @@ and gotchas that make a multi-PR effort actually land.
 `--inline` and `--skip-review` pass through unchanged to every
 `/helmsman-skills:review` and `/helmsman-skills:fold-review` call in Phase 4;
 `--post-replies` passes through to every `fold-review` call.
+`--max-prs <n>` caps the PR count of the Phase 1 split (default: no cap, unless
+the project's agent docs state one - read them per `../review/conventions.md`).
 
 Run the phases in order. Each phase has a gate: do not start the next until the
 current one's output exists. Track phases with the task tools.
@@ -36,7 +38,8 @@ any non-draft outward action (posting comments, flipping prod flags). Those are 
 implied by this pipeline.
 
 The only reasons to pause *before* pushing the drafts: a *decisive external constraint*
-surfaced in Phase 0 (auth/credentials/provisioning/cost) that changes scope, or a genuine
+surfaced in Phase 0 (auth/credentials/provisioning/cost/push access) that changes scope, a
+design that needs manual operator action in production (Phase 1), or a genuine
 fork the specs can't resolve from the request + codebase. Otherwise, silence between the
 request and the pushed drafts is expected — narrate progress, don't ask permission, and
 don't leave the chain half-built.
@@ -71,6 +74,13 @@ parallel where possible:
   exact integration points (the template to mirror, the wiring seam, the
   contracts, the config surface). Demand file:line citations, and put
   "Do not spawn agents." in its prompt.
+- **Push access** — before any spec: `gh auth status`, then for EACH repo the
+  feature touches, from its checkout (the project root may not be a repo):
+  `git -C <checkout> ls-remote origin HEAD`, and `gh api repos/{owner}/{repo}
+  --jq .permissions.push` (gh fills in owner/repo) printing `true`. If
+  any fails, stop and tell the user which one (auth, network/DNS, missing
+  permission): every unit is pushed as soon as it is committed, so a run that
+  cannot push only builds branches nobody can land.
 
 **Output:** a written understanding of the gaps + the load-bearing constraints.
 Surface any *decisive* external constraint (auth/credentials, a provisioning
@@ -86,7 +96,12 @@ efforts) to drive it, if one is installed; otherwise drive it yourself.
 **How to split — logical seams, sized for review.** The goal is 1→N PRs each
 small enough to review by hand (target **≤500–800 changed lines**, tests
 included). There is NO fixed PR count — a small feature is one PR; a large one
-is however many its natural seams produce. Split along whichever of these draws
+is however many its natural seams produce, unless `--max-prs` (or the project's
+agent docs) sets a cap; the flag wins over the docs, and a docs cap stated per
+chain applies per chain. Over the cap, merge units along their logical seams
+(the most closely related units first) until the split fits, never exceed it,
+and say which units were merged and why in the progress narration and the
+final report. Split along whichever of these draws
 the cleanest boundaries:
 - **By service / deployable** — API vs frontend vs gitops/infra vs migration.
 - **By library / package** — a new internal library is its own unit; follow
@@ -109,6 +124,12 @@ PR, ship one PR — do not manufacture a chain.
   `<feature>-NN-<name>-spec.md`. NEVER put specs in a repo subtree.
 - Bake the decisive constraints from Phase 0 into every spec (e.g. "this auth
   path needs IAM, not the bearer token").
+- **Manual operator action in production is a decisive constraint.** If a
+  unit's rollout needs someone to act by hand in prod (a CLI run, a manual
+  migration, a console click), the spec says so under rollout, and you raise it
+  to the user before Phase 3 with the alternative that avoids it (an automated
+  migration, a gitops change, a startup hook). Finding it after implementation
+  means a rejected design and a rewrite. Phase 2 hunts for any the specs missed.
 
 ## Phase 2 — Adversarial spec review + fold-in
 Review the SPECS before any code. For each spec, dispatch `../review/hunter.md`
@@ -141,7 +162,8 @@ location: a layer told to write into a repo checkout can have its write denied o
 then read as a stalled layer with no findings ever recovered. Hunt:
 contradictions with ground truth, chain-safety holes ("would merging PRx
 actually regress?"), hand-waved "reuse the existing path" claims, missing
-failure modes, completeness ("does the set actually close the whole gap?").
+failure modes, manual operator steps in production the spec doesn't name,
+completeness ("does the set actually close the whole gap?").
 
 If `../review/hunter.md` or `../review/edge.md` doesn't exist (an
 out-of-date `review` install), report that explicitly and skip that layer for the affected spec(s) rather
@@ -171,7 +193,9 @@ One worktree + one draft PR per spec. Branch off `origin/main`.
   its prompt; then YOU verify gates, review the
   diff, and commit locally. Subagents must NOT commit. Push each branch and open
   its **draft** PR right after its commit (see "Human involvement" — drafts are
-  pre-authorized; no gate), then run Phase 4 over all of them. Do not stop
+  pre-authorized; no gate), with that unit's spec, condensed to the description
+  rules below, as the PR description; do not wait for the other units. Then run
+  Phase 4 over all of them. Do not stop
   half-built to ask the user which unit to build or whether to push.
 - **Before every push** (from the worktree): the format-and-lint step in
   `../review/conventions.md`, plus the project's type-check (e.g. `uv run
@@ -280,7 +304,8 @@ A few conventions that generalize across repos regardless of toolchain:
 
 End with one line per phase (and per PR for Phase 4's review and fold), each
 `ran` or `skipped: <reason>`: Phase 0, spec split, spec review, implement,
-push, review, fold, validate.
+push, review, fold, validate. The spec split line names any units merged to
+fit the PR cap.
 
 ## Notes
 - Pipe long command output to files; don't parse inline.
