@@ -1,13 +1,13 @@
 ---
 name: pr-comments
-description: Use for any write operation on GitHub PR review comments - "post/send/add a review comment", "update that comment", "mark resolved comments as resolved", "check which threads are folded in", or deleting own comments after a bad post
-argument-hint: "<pr> <post|update|resolve|delete-own> [...]"
+description: Use for any write operation on GitHub PR review comments - "post/send/add a review comment", "reply on that thread", "update that comment", "mark resolved comments as resolved", "check which threads are folded in", or deleting own comments after a bad post
+argument-hint: "<pr> <post|reply|update|resolve|delete-own> [...]"
 allowed-tools: Bash, Read, Grep
 ---
 
 # pr-comments
 
-All write operations on PR review comments: post, update, resolve, delete-own.
+All write operations on PR review comments: post, reply, update, resolve, delete-own.
 One shared rulebook, one place for the mechanics.
 
 ## Rules (apply to every operation)
@@ -16,8 +16,9 @@ One shared rulebook, one place for the mechanics.
   assume a default repo.
 - NEVER post test/probe comments to a live PR. Compute anchors offline, then
   post once with the real body.
-- Comment bodies via `curl` with a JSON heredoc (or `gh api --input <file>`) -
-  never `gh api -f/--field`, it mangles backticks and em-dashes.
+- Comment bodies come from a file: a JSON heredoc (`curl -d @-`, `gh api
+  --input <file>`) or `-F body=@<file>`. Never pass a body inline with
+  `-f`/`-F`; the shell mangles backticks and em-dashes.
 - **NEVER dismiss a review.** Approval is one per-user state - dismissing any
   review drops that user's entire approval. No teammate, bot, or "it blocks
   the merge" argument authorizes it - only the user, doing it themselves.
@@ -74,6 +75,20 @@ or its result unclear, list your own recent comments
 (`gh api repos/<OWNER>/<REPO>/pulls/<PR>/comments --paginate`, filter by
 your login) first. If the comment is there, use it and do not retry.
 Retry only if it is missing. Delete only when two copies really exist.
+
+## reply
+
+One reply per thread, the body written to a file first:
+
+```
+gh api graphql -f threadId='<THREAD_ID>' -F body=@<body-file> \
+  -f query='mutation($threadId: ID!, $body: String!) {
+    addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
+      comment { url } } }'
+```
+
+Return the `url`. An interrupted or unclear post follows `post`'s
+list-before-retry rule.
 
 ## update
 
@@ -132,5 +147,5 @@ by dismissing.
 - Dismissing a review to unblock a merge - it silently revokes approval.
 - Resolving from the changelog instead of verifying each thread at HEAD.
 - Treating `isOutdated` as addressed.
-- `--field` for bodies with backticks.
+- Inline `-f`/`-F` bodies with backticks.
 - Replying "Done" everywhere when only resolution was asked for.

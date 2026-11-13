@@ -13,7 +13,6 @@ def test_fold_review_has_distillation_and_ledger_steps():
         "ledger.py",
         "set-status",
         "candidate rule",
-        "re-verify",
         "git show",
     ):
         assert token in text, token
@@ -75,13 +74,6 @@ def test_fold_review_cleanup_removes_the_artifact_directory():
     assert "delete `<outdir>`" in block
 
 
-def test_fold_review_sibling_sweep_starts_from_the_facts_section():
-    """The deterministic list comes first; the manual grep extends it, not replaces it."""
-    text = _flat()
-    assert "Start from the `j_siblings` section of `FACTS-<n>.md`" in text
-    assert "starting point, not the answer" in text
-
-
 def test_fold_review_gates_on_a_wider_pytest_scope_than_a_review():
     """A fold gate widens the test scope a review's fact pass uses."""
     text = " ".join(FOLD.read_text().split())
@@ -100,23 +92,12 @@ def test_fold_review_replies_instead_of_resolving_what_it_did_not_fix():
     block = _flat()
     assert "Reply on every thread this diff did not fix" in block
     assert "never resolve it, reply on the thread instead" in block
-    assert "addPullRequestReviewThreadReply" in block
 
 
 def test_fold_review_gates_every_reply_on_explicit_approval():
     """A reply body is the one write in this flow the user has to approve first."""
     block = _flat()
     assert "post only the ones they explicitly approve" in block
-    assert (
-        "Never post an unapproved body, and never resolve the thread as a substitute"
-        in block
-    )
-
-
-def test_fold_review_reply_body_never_passes_through_the_shell():
-    """Bodies are read from a file, so backticks and dashes survive the post."""
-    block = _flat()
-    assert "-F body=@<outdir>/reply-<thread-id>.md" in block
 
 
 def test_fold_review_spec_records_the_thread_and_a_three_way_disposition():
@@ -477,3 +458,17 @@ def test_style_rewrite_tool_gets_one_bounded_attempt():
             "never retry in a loop",
         ):
             assert token in text, (path.parent.name, token)
+
+
+def test_reply_body_is_passed_from_a_file():
+    """pr-comments' reply mutation reads its body from a file, never inline."""
+    assert (
+        "-F body=@<body-file>"
+        in (SCRIPTS.parents[1] / "pr-comments" / "SKILL.md").read_text()
+    )
+
+
+def test_fold_worktree_setup_runs_in_step_2_before_step_3():
+    """The worktree and outdir exist before the spec review writes into them."""
+    text = FOLD.read_text()
+    assert "setup_round.py" in text.split("### 2.")[1].split("### 3.")[0]

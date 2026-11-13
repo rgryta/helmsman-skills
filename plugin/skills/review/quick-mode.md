@@ -7,7 +7,7 @@ PR, no Phase 0, no separate layers.
   with the single line `SKIPPED: --quick`.
 - Step 5: dispatch ONE agent per PR, layer name `quick`, whose instructions
   are `<skill-dir>/hunter.md`, `<skill-dir>/edge.md` and the
-  `landmine-review` SKILL.md, read by path as one combined brief (no
+  `<skill-dir>/../landmine-review/SKILL.md`, read by path as one combined brief (no
   `project` layer), plus the shared dispatch sentence. `--quick` replaces
   the layer set; ignore `--skip-review` when both are passed.
 - Step 6 waits on `quick` alone. Record `ledger.py round-end --complete

@@ -385,7 +385,6 @@ def test_rereview_reuses_unchanged_patches_and_hears_the_author():
     text = _flat(SKILL.read_text())
     assert "`rebase`" in text and "`delta_commits`" in text
     assert "re-read every `revisit_files` path at the new head" in text
-    assert "skip steps 3 and 5, fetch the author's replies as in step 4" in text
     assert "drop findings the author answered" in text
     assert "step 6's `round-end --complete`" in text
     assert "PR author's replies on earlier review threads" in text
@@ -447,17 +446,6 @@ def test_related_workflows_resolve_the_same_portable_model_tier():
         text = (SCRIPTS.parent.parent / skill_name / "SKILL.md").read_text()
         assert "../review/model-choice.md" in text, skill_name
         assert "gpt-" not in text and "Gemini" not in text, skill_name
-
-
-def test_c_pytest_infra_exception_lives_in_one_place():
-    """Verdict and fold gate share one carve-out, which still requires a CI config."""
-    fold = (SCRIPTS.parent.parent / "fold-review" / "SKILL.md").read_text()
-    for text in (verdict(), fold):
-        assert "test-gate-exceptions.md" in text
-        assert "`test runner infra unavailable`" not in text
-    block = _flat(GATE_EXCEPTIONS.read_text())
-    assert "`test runner infra unavailable`" in block
-    assert "CI config" in block
 
 
 def test_author_conventions_are_labelled_defaults():
@@ -593,3 +581,8 @@ def test_quick_mode_is_a_flagged_lower_confidence_single_agent_round():
         "ignore `--skip-review` when both are passed",
     ):
         assert token in quick, token
+
+
+def test_rebase_mode_still_runs_phase0():
+    """A rebase round skips the layers but still runs Phase 0 against the new base."""
+    assert "skip step 5 but still run step 3" in _flat(SKILL.read_text())

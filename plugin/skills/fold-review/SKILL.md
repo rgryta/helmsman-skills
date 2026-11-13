@@ -43,14 +43,16 @@ dispatch wave.
 
 **New-PR mode.** When the PR is already merged or closed (`gh pr view <n>
 --json state`), or the user asks for the fixes in a new PR, read
-`new-pr-mode.md` (this skill's base dir) before step 4 and follow it: the
+`new-pr-mode.md` (this skill's base dir) before step 2 and follow it: the
 fold goes onto a new branch and a new draft PR instead of the original.
 
 ## Scope
 
 Accepts one or more inputs, each a local file path or a PR number/link;
 several inputs are a stack, one input per PR. Ticket-ID input is out of
-scope - no reliable ticket-to-PR mapping exists to query generically. Runs
+scope - no reliable ticket-to-PR mapping exists to query generically. So
+are fork PRs (head branch in a different remote than `origin`): there is no
+remote to push to. Runs
 fully autonomously end to end: spec, spec review, implement, push, diff
 review, gate, resolve threads - no approval checkpoint before push, this is a
 fold-in onto a PR the user explicitly asked to close out (or, in new-PR mode,
@@ -81,7 +83,7 @@ first and treat that as the resolution.
 
 - **File path that exists** - read it as the review content, but still
   resolve `<n>`, owner/repo, and the PR's head branch before continuing -
-  step 2 needs `<n>`, step 4 needs the branch to build the worktree, step 7
+  step 2 needs `<n>` and the branch to build the worktree, step 7
   needs owner/repo for thread resolution, step 8 needs the PR URL. Never
   guess a repo: derive `<n>` from the filename if it's shaped like
   `REVIEW-PR-<n>.md`; otherwise derive `<n>` and the PR from the containing
@@ -164,12 +166,41 @@ first and treat that as the resolution.
 
 ### 2. Spec the fixes
 
+**Worktree first.** Run `python3 ../review/scripts/setup_round.py --repo <owner/repo> --pr <n>
+--fold --tag <task-name>` from inside the repo's local checkout (same error
+JSON and `--worktree` option as `review` step 1). It fetches `<headRefName>` and
+`<baseRefName>`, adds or reuses the worktree `<repo>-worktrees/fold-<n>`
+checked out **on the actual branch, not detached HEAD** (so step 4's plain
+`git push` works), takes a lease on it, fast-forwards it to the PR head (so it
+picks up anything that landed since the review ran; after a force-push it
+resets a clean worktree whose local commits were all pushed to the new PR
+head), creates this fold's
+`<outdir>` = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/fold-<epoch>/`,
+prunes older `fold-*` directories, and prints ONE JSON object: take
+`worktree`, `outdir` and `pre_fold_sha` as `<pre-fold-sha>` (the starting commit, which step 5
+needs to scope its diff to exactly what this fold changes) from it. Exit 3
+means another live session holds the worktree's lease - stop and report,
+never share it. If the branch is already checked out in another worktree,
+the add fails - run `git worktree list` and either rerun with `--worktree
+<that path>` or `git worktree remove` it first. A dirty worktree fails setup:
+inspect it. Local-only commits (ones the remote never had, e.g. after a
+force-push rewrote the branch) also fail setup: never push over the remote
+rewrite - stop and report to the user, who decides whether to cherry-pick them
+onto the new head or drop them. Removing the worktree does not help, because
+the commits live on the branch. Every artifact this fold produces
+goes in `<outdir>`, never into the worktree - a checkout holds tracked code, and
+untracked scratch `.md` dropped inside one is junk, and a layer told to write into the worktree
+can lose its findings to a denied write and then read as a stalled layer.
+
 Write `FOLD-PR-<n>-spec.md` at the project root (same location as
 `REVIEW-PR-<n>.md`). If a previous one exists, read it first: a finding that
 comes back after being rejected there keeps that rejection and its reason,
 unless the review now gives a new argument.
 For every finding in the review content: record the thread ID captured in
-step 1, and give it exactly one of three dispositions - fixed in this PR (and
+step 1 and its ledger id (`python3 ../review/scripts/ledger.py report --repo
+<owner/repo> --pr <n>` lists open findings as `[open] <id> <severity>
+<file>:<line> ... <title>`; match by file:line and title, none if no entry
+matches), and give it exactly one of three dispositions - fixed in this PR (and
 how), fixed in a different PR or commit (and which), or explicitly rejected
 (and why). No silent drops, no blanket "addressed" without substance. Step 7
 keys on that three-way split, because only the first case may resolve a
@@ -181,10 +212,7 @@ folded by default; "only a nit" is not a rejection reason. This spec file is a l
 commit it, never push it onto the PR - which is exactly why the reasoning has
 to reach the PR as a reply, since nothing else here does.
 
-**Sibling-site sweep.** Start from the `j_siblings` section of `FACTS-<n>.md`,
-which lists sites still carrying the shape the diff changed; it is a
-starting point, not the answer, because it matches verbatim survivors only.
-Then, for each finding being fixed: one grep across the touched
+**Sibling-site sweep.** For each finding being fixed: one grep in the worktree across the touched
 package/module for the same pattern - the literal code shape being changed,
 not just the symbol name (a rename-only grep undercounts). Note candidate sibling sites directly in the spec next to the
 finding; each becomes either an in-scope fix or an explicit rejection with a
@@ -213,8 +241,7 @@ use. Both are flat prompt files, not discoverable skills, so no fan-out check
 is needed for them (unlike `landmine-review` in step 5).
 
 There is no diff yet at this point - this review runs pre-implementation,
-same as today. Create `<outdir>` (defined in step 4; `mkdir -p` there is then
-a no-op) before dispatching. Adapt the dispatch prompt's "read CONTEXT/FACTS"
+same as today. Adapt the dispatch prompt's "read CONTEXT/FACTS"
 preamble to: "Do NOT post anything to GitHub. Do not spawn agents. Read `FOLD-PR-<n>-spec.md` and
 the original review content first (their actual absolute paths - you do not
 inherit the orchestrator's cwd). Apply your briefs to this spec text. Write
@@ -226,44 +253,13 @@ exactly COMPLETE or PARTIAL: <reason>." The `-spec` infix keeps
 the stalled layer alone, and a layer still stalled after that is stopped
 and reported in step 8 as a confidence ceiling, never retried. Step 4 cannot
 start until this wait returns, so there is nothing else to overlap with.
-If `await_layers.py` is missing, read each file after its task's completion
-notification instead.
-
-If `../review/hunter.md` or `../review/edge.md` doesn't exist (an
-out-of-date `review` install), report that explicitly and skip the missing
-layer rather than blocking the
-autonomous flow on missing tooling - do not invent reviewer instructions to
-fall back to.
 
 Fold genuine findings back into the spec; no need to re-run the review after
 fixing, just fix and move on.
 
 ### 4. Implement
 
-Run `python3 ../review/scripts/setup_round.py --repo <owner/repo> --pr <n>
---fold --tag <task-name>` from inside the repo's local checkout (same flags
-and error JSON as `review` step 1). It fetches `<headRefName>` and
-`<baseRefName>`, adds or reuses the worktree `<repo>-worktrees/fold-<n>`
-checked out **on the actual branch, not detached HEAD** (so step 4's plain
-`git push` works), takes a lease on it, fast-forwards it to the PR head (so it
-picks up anything that landed since the review ran; a dirty or diverged
-worktree fails setup - inspect it, remove it and rerun), creates this fold's
-`<outdir>` = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/fold-<epoch>/`,
-prunes older `fold-*` directories, and prints ONE JSON object: take
-`worktree`, `outdir` and `pre_fold_sha` as `<pre-fold-sha>` (the starting commit, which step 5
-needs to scope its diff to exactly what this fold changes) from it. Exit 3
-means another live session holds the worktree's lease - stop and report,
-never share it. If the branch is already checked out in another worktree,
-the add fails - run `git worktree list` and either rerun with `--worktree
-<that path>` or `git worktree remove` it first. Manual fallback only if the
-script is missing: `git fetch origin <headRefName> <baseRefName>`, `git
-worktree add <repo>-worktrees/fold-<n> <headRefName>`, `git rev-parse HEAD`
-there as `<pre-fold-sha>`, `mkdir -p <outdir>` with `<epoch>` from `date
-+%s`. Every artifact step 5 produces
-goes there, never into the worktree - a checkout holds tracked code, and
-untracked scratch `.md` dropped inside one is junk, and a layer told to write into the worktree
-can lose its findings to a denied write and then read as a stalled layer.
-Implement per the approved spec directly in that worktree - no subagent
+Implement per the approved spec directly in step 2's worktree - no subagent
 delegation at this scale. Commit locally.
 
 **Prove every test the fold adds or changes.** Revert the code change that
@@ -330,7 +326,8 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   under `--skip-review` - it is a self-check, not adversarial review.
 - **Full tier**, skipped under `--skip-review` unless a sensitive path is
   touched - write `<outdir>/CONTEXT-<n>.md` once (spec digest, finding list,
-  touched-file map, head commit, FACTS location). Under `--inline`, follow
+  touched-file map, head commit, FACTS location, the worktree path and the
+  diff range `<pre-fold-sha>..HEAD`). Under `--inline`, follow
   `inline-mode.md` (already read per Flags above) for how every layer's
   dispatches run. Otherwise, dispatch, in ONE message, as `review`'s step 5
   does (the calls return at once; keep each task id, never name an agent or
@@ -338,9 +335,8 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   per-CLI dispatch and collection in `../review/cli-notes.md`):
   - `../review/hunter.md` and `../review/edge.md` as two `Agent` calls on
     the same balanced model at medium effort resolved in step 3.
-  - `landmine-review`, discovered the same way `review`'s step 5 Layer
-    `landmine` discovers it (an external skill - don't hardcode its path here), then `python3
-    ../review/scripts/fanout_check.py <resolved-path>/SKILL.md`. A
+  - `../landmine-review/SKILL.md`, after `python3
+    ../review/scripts/fanout_check.py ../landmine-review/SKILL.md`. A
     `FANOUT:` verdict means run its steps directly instead of wrapping it
     in an `Agent`; on `FLAT:`, dispatch its contents as `Agent`
     instructions, no `model` override.
@@ -355,10 +351,8 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   means the path never resolved - fix it and re-wait; retrying layers cannot
   help. On `STALLED:`, one
   grace re-wait for the stalled layer(s) alone at 240s before treating
-  any as dead - a slow layer is not a dead layer. If a redispatch does
-  become necessary, stop the original agent first (two writers on one
-  findings file race, and the file that survives is whichever finished
-  last, not whichever is better).
+  any as dead - a slow layer is not a dead layer. A layer still stalled
+  after that is dead: stop it, never retry it.
   Run `python3 ../review/scripts/verify_citations.py <worktree>
   <outdir>/REVIEW-<n>-*.md` before trusting any file:line citation. The
   first argument stays the WORKTREE - it resolves the cited code paths, and
@@ -366,18 +360,14 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
   vacuously instead of failing.
   Verify every surviving claim against the actual diff; discard false
   positives silently. For every confirmed finding, one class-generalization
-  sweep - grep the touched package for the same pattern, same mechanism as
-  step 2's sibling sweep, now run against the pushed-shape code.
+  sweep - start from the `j_siblings` section of `FACTS-<n>.md` (verbatim
+  survivors of the changed shape only), then grep the touched package for
+  the same pattern, same mechanism as step 2's sibling sweep, now run
+  against the pushed-shape code.
   Fold every genuine finding into the worktree immediately - fix and move
   on, no re-review after fixing.
   A layer that comes back PARTIAL or dead-after-grace is reported as a
   confidence ceiling in step 8, never silently treated as clean.
-
-`fanout_check.py` or `await_layers.py` missing (older `review` install) -
-degrade the full tier to `hunter.md` and `edge.md` dispatches only, read
-from their findings files after each task's completion notification (skip
-`landmine-review`), and note the degradation in step 8, rather than
-blocking the fold entirely on tooling it doesn't own.
 
 ### 6. Gates
 
@@ -385,9 +375,9 @@ blocking the fold entirely on tooling it doesn't own.
 `a_ruff`/`b_pyright`/`c_pytest` sections failing is a gate failure, and so is
 any of the three coming back as anything other than OK or FINDINGS - a check
 that crashed, timed out or skipped ran no gate at all, and no verdict is not
-a pass. Exceptions: the `c_pytest` infra-only skip and a test run CI
-carries, both in `../review/test-gate-exceptions.md`, are not gate failures;
-note them in step 8 and continue. Otherwise say which check gave no verdict
+a pass. Exception: a test run CI carries
+(`../review/test-gate-exceptions.md`) is not a gate failure; note it in
+step 8 and continue. Otherwise say which check gave no verdict
 and why rather than resolving threads on it. On failure, commit the fix as a
 follow-up commit, push it (step 4's push rules), and re-run the full gate set
 once, not a separate retry per failing check - still failing, stop, report
@@ -397,7 +387,7 @@ already does repo-correct diff-scoped discovery (e.g. a root pyright config
 that excludes one package while another stays in scope is respected
 automatically, since the check runs the repo's own configured tool rather
 than a hand-maintained exception list). If step 5 fell back to "Phase 0
-unavailable" (script missing or produced nothing), discover the repo's own
+unavailable" (the FACTS file holds only the `Phase 0 unavailable` line), discover the repo's own
 gate commands manually, in the same places `review`'s step 5 Layer
 `project` looks for a repo's own review skill: check the repo's own
 `CLAUDE.md`/`AGENTS.md`/`README`, CI config, and Makefile/package-manager scripts for the actual lint/typecheck/
@@ -405,7 +395,7 @@ test commands - never assume another repo's toolchain. If none are
 discoverable even then, report that explicitly and proceed - blocking on an
 undiscoverable gate would stall this autonomous flow with no data to act on.
 
-### 7. Push follow-ups, resolve, reply
+### 7. Push follow-ups, resolve, reply, ledger
 
 Commit and push whatever steps 5-6 folded in, with the same format-and-lint
 step and push rules as step 4.
@@ -467,19 +457,8 @@ and its reasoning reaches the reader through step 8's report only.
 `--post-replies` was passed: then post every body without showing it first. Write
 each body to `<outdir>/reply-<thread-id>.md`, show the user every body next
 to its thread (path:line and the finding it answers), and post only the ones
-they explicitly approve. Post approved bodies one thread at a time, reading
-the body from its file so the shell never touches it:
-
-```
-gh api graphql -f threadId='<id>' -F body=@<outdir>/reply-<thread-id>.md \
-  -f query='mutation($threadId: ID!, $body: String!) {
-    addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $threadId, body: $body}) {
-      comment { url } } }'
-```
-
-`-F body=@<file>` is what keeps backticks and dashes intact; the inline
-`-f body='<text>'` form `pr-comments` warns about is the one that mangles
-them. A body the user declines or never answers is not posted, and the thread
+they explicitly approve. Post approved bodies one thread at a time with
+`pr-comments`' `reply` operation. A body the user declines or never answers is not posted, and the thread
 is still not resolved - step 8 reports it as left open with no reply. A reply
 that fails to post is reported the same way a failed resolve is, not
 swallowed and not retried as a resolve.
@@ -491,17 +470,33 @@ flags, a limitation it removed). If the author is the gh user (`gh api user
 --jq .login`), rewrite only those lines and apply them with `gh pr edit <n>
 --body-file <outdir>/pr-body.md`; otherwise list them in step 8.
 
-On success, remove the worktree (`git worktree remove <repo>-worktrees/fold-<n>`,
-no `--force`; only if that fails, `--force`) and delete `<outdir>` - step 8's
-report is written from it, so drop it once the report exists. Some CLIs'
-command policies block `--force` removal and `rm -rf`; when a removal fails,
-run `setup_round.py --release <worktree> --tag <task-name>` and list every
-leftover path in step 8 - never skip it silently.
+**Ledger sync.** For every finding with a ledger id from step 2, `python3
+../review/scripts/ledger.py set-status --repo <owner/repo> --pr <n> --id
+<finding-id> --status <s>`: `fixed` when this diff fixed it and step 6's
+gate passed, `wontfix` when the spec rejected it, `regressed` when a fix
+does not hold. A finding whose fix lives in a different PR stays `open`
+until that PR lands, because the ledger tracks whether a finding is closed
+and not whether someone means to close it.
+
+**Rule distillation.** For every CONFIRMED BLOCKER folded in, decide whether the bug class is
+mechanically expressible. If yes, write a candidate rule to
+`~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/semgrep-candidates/<kebab-id>.yaml`
+(`<outdir>`'s parent, which step 9's cleanup keeps), using the seed
+rules in `../review/scripts/semgrep-rules/` as the shape. Never write
+into that seed directory: it is the installed skill copy, which a
+plugin update replaces. Validate the rule fires on the PRE-FIX code:
+`probe="$(mktemp -d)/prefix-probe.<ext>"` with `<ext>` the extension of
+the file under test (semgrep picks the language from it), `git show
+<pre-fold-sha>:<path> > "$probe"`, then `semgrep --config <the-new-file>
+"$probe"` (or `uvx semgrep`). A rule that cannot be made to fire on the
+actual bug is not worth keeping - delete it. A rule that fires belongs
+in a separate follow-up PR to the repository that ships these skills,
+never in the fold itself.
 
 ### 8. Report
 
-One-line summary, diff stat, gate results (noting a `c_pytest` infra-only
-skip or CI carrying the test verdict, if either carve-out applied), the non-vacuous test proof from
+One-line summary, diff stat, gate results (noting CI carrying the test
+verdict, if that carve-out applied), the non-vacuous test proof from
 step 4 (which tests were reverted and confirmed failing, and any that could
 not be), whether `--inline` and/or `--skip-review` were in effect and what
 that skipped (step 3's spec review, step 5's full-tier dispatch, or the
@@ -520,71 +515,15 @@ review file, and the PR description lines updated or listed as stale.
 
 End with one line per step, each `ran` or `skipped: <reason>`: Phase 0,
 spec review, implement, diff review, citations check, gate, push, PR
-description, replies, thread resolution.
+description, replies, thread resolution, ledger, cleanup.
 
-## Error handling
+### 9. Cleanup
 
-- PR not found, or not mapped to a local checkout - fail with a clear
-  message naming the resolution step that failed (step 1) - no silent
-  fallback to guessing a repo.
-- `run_phase0.py` missing or fails to produce `FACTS-<n>.md` (step 5) -
-  synthesize a one-line "Phase 0 unavailable" fact file; downstream steps
-  see an explicit ceiling, not silence. Gates (step 6) fall back to manual
-  discovery-and-run in this case only.
-- `fanout_check.py` or `await_layers.py` missing (step 5, older `review`
-  install) - full tier degrades to `hunter.md` and `edge.md`
-  dispatches only, each read from its file after the task's completion
-  notification, noted in step 8, rather than blocking the fold.
-- Diff-review dispatch STALLED past the 240s grace window (step 5) - treat
-  as dead, report PARTIAL, proceed; never silently accepted as clean.
-- Zero new local commits after step 4 - skip step 5 entirely.
-- Gate failure after the retry (step 6) - stop, report the failing gate
-  output, leave the worktree for inspection. The commits are already
-  pushed; resolve no threads.
-- Push rejected as non-fast-forward (step 4 or 7) - rebase onto the new tip,
-  retry once; a second rejection stops the flow. Never `--force`/`--force-with-lease` onto someone else's PR;
-  a stack fold's cascade push follows `stack-mode.md` instead.
-- Rebase stopped or unverified in a stack cascade - abort it, push nothing,
-  report (`stack-mode.md`).
-- Thread-resolve failure (step 7) - reported, not fatal.
-- Reply body declined or unanswered (step 7) - the thread stays unresolved
-  and unanswered, reported in step 8. Never post an unapproved body, and
-  never resolve the thread as a substitute; `--post-replies` approves every body.
-- Reply post failure (step 7) - reported, not fatal, same as a failed
-  resolve.
-
-## Out of scope
-
-- Ticket-ID input resolution.
-- An approval checkpoint before push.
-- Fork PRs (head branch lives in a different remote/fork than `origin`) -
-  out of scope; would need an explicit different remote to push to.
-- A separate helper script for the GitHub-fetch/resolve-thread calls - these
-  are `gh`/`gh api graphql` invocations inline in this skill, consistent with
-  how `review` and `pr-comments` already work.
-
-## After folding: ledger sync + rule distillation
-
-1. For every review finding addressed in this fold, first re-verify the fix
-   actually resolves the finding (re-read the changed code, re-run the
-   relevant test); only then `python3 ../review/scripts/ledger.py
-   set-status --repo <owner/repo> --pr <n> --id <finding-id> --status
-   fixed` (relative to this skill's base dir). Findings you disproved get
-   `--status wontfix`; a fix that does not hold gets `--status regressed`. A
-   finding whose fix lives in a different PR stays `open` until that PR
-   lands, because the ledger tracks whether a finding is closed and not
-   whether someone means to close it.
-2. For every CONFIRMED BLOCKER folded in, decide whether the bug class is
-   mechanically expressible. If yes, write a candidate rule to
-   `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/semgrep-candidates/<kebab-id>.yaml`
-   (`<outdir>`'s parent, which step 7's cleanup keeps), using the seed
-   rules in `../review/scripts/semgrep-rules/` as the shape. Never write
-   into that seed directory: it is the installed skill copy, which a
-   plugin update replaces. Validate the rule fires on the PRE-FIX code:
-   `probe="$(mktemp -d)/prefix-probe.<ext>"` with `<ext>` the extension of
-   the file under test (semgrep picks the language from it), `git show
-   <pre-fix-sha>:<path> > "$probe"`, then `semgrep --config <the-new-file>
-   "$probe"` (or `uvx semgrep`). A rule that cannot be made to fire on the
-   actual bug is not worth keeping - delete it. A rule that fires belongs
-   in a separate follow-up PR to the repository that ships these skills,
-   never in the fold itself.
+Step 8's report is the final message, so compose it, run this cleanup, then
+send the report with one `cleanup:` line (removed, or every leftover path).
+Remove the worktree (`git worktree remove <repo>-worktrees/fold-<n>`,
+no `--force`; only if that fails, `--force`) and delete `<outdir>`, unless a
+step above says to leave the worktree for inspection. Some CLIs'
+command policies block `--force` removal and `rm -rf`; when a removal fails,
+run `setup_round.py --release <worktree> --tag <task-name>` and list every
+leftover path on the `cleanup:` line - never skip it silently.
