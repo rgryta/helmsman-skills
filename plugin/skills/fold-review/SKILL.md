@@ -38,6 +38,11 @@ it: it folds only the named PRs bottom-up, rebases and verifies the whole
 chain, pushes with a lease, gates once at the chain tip, and caps every
 dispatch wave.
 
+**New-PR mode.** When the PR is already merged or closed (`gh pr view <n>
+--json state`), or the user asks for the fixes in a new PR, read
+`new-pr-mode.md` (this skill's base dir) before step 4 and follow it: the
+fold goes onto a new branch and a new draft PR instead of the original.
+
 ## Scope
 
 Accepts one or more inputs, each a local file path or a PR number/link;
@@ -45,8 +50,8 @@ several inputs are a stack, one input per PR. Ticket-ID input is out of
 scope - no reliable ticket-to-PR mapping exists to query generically. Runs
 fully autonomously end to end: spec, spec review, implement, push, diff
 review, gate, resolve threads - no approval checkpoint before push, this is a
-fold-in onto a PR the user explicitly asked to close out, not a new draft
-being opened. The one exception is step 7's reply comments on findings this
+fold-in onto a PR the user explicitly asked to close out (or, in new-PR mode,
+its follow-up draft). The one exception is step 7's reply comments on findings this
 diff did not fix: a comment posted as the user needs their explicit approval
 of the body, which "close out this PR" does not grant.
 
@@ -83,12 +88,14 @@ first and treat that as the resolution.
   reattributed, merged, or dropped findings in it on purpose, so never
   re-add a live thread or review body that predates the file's
   modification time (a thread's time is its first comment's `createdAt`, a
-  body's is its `submittedAt`). Live state contributes two things only:
+  body's is its `submittedAt`, an issue comment's is its `updated_at`). Live
+  state contributes two things only:
   thread IDs for findings the file already holds (step 7 resolves or
-  replies on them), and threads or review bodies submitted after the file
-  was written, which are new feedback and get added, kept by the same
-  `isResolved` and `folded-reviews.txt` filters as the PR-number branch
-  below. List every unresolved thread or unfolded review body this rule
+  replies on them), and threads, review bodies or issue comments posted
+  after the file was written, which are new feedback and get added, kept by
+  the same `isResolved` and `folded-reviews.txt` filters as the PR-number
+  branch below. List every unresolved thread, unfolded review body or issue
+  comment this rule
   dropped for predating the file, so step 8 can report it. Only then
   continue to step 2.
 - **PR number/link** - resolve owner/repo the same way `review` step 1 does:
@@ -98,19 +105,20 @@ first and treat that as the resolution.
   (defined above).
   - Primary source is the PR's own reviews on GitHub - this is the live,
     canonical record of open feedback, whether it's a human reviewer,
-    another bot, or `review --post` output. A review can carry feedback two
-    ways: inline comment threads, and/or a top-level review body (e.g. a
+    another bot, or `review --post` output. Feedback arrives three ways:
+    inline comment threads, a top-level review body (e.g. a
     `CHANGES_REQUESTED` review submitted with just a summary, no inline
-    comments) - fetch both, since either can exist without the other:
+    comments, or an `APPROVED` one with notes), and PR issue comments -
+    fetch all three, since any can exist without the others:
     ```
     gh api graphql -f query='query { repository(owner:"<o>", name:"<r>") {
       pullRequest(number: N) {
         reviewThreads(first: 100) { nodes {
-          id isResolved path line
+          id isResolved isOutdated path line originalLine
           comments(first: 100) { nodes { body author { login } createdAt }
             pageInfo { endCursor hasNextPage } } }
           pageInfo { endCursor hasNextPage } }
-        reviews(first: 100, states: [CHANGES_REQUESTED, COMMENTED]) { nodes {
+        reviews(first: 100, states: [CHANGES_REQUESTED, COMMENTED, APPROVED]) { nodes {
           id state body author { login } submittedAt }
           pageInfo { endCursor hasNextPage } } } } }'
     ```
@@ -120,7 +128,13 @@ first and treat that as the resolution.
     1 and double-count it), and any thread whose `comments.pageInfo.hasNextPage`
     is true with `node(id: "<thread id>") { ... on PullRequestReviewThread {
     comments(first: 100, after: "<endCursor>") { ... } } }` - a truncated
-    page drops feedback silently.
+    page drops feedback silently. Then the issue comments:
+    `gh api repos/<o>/<r>/issues/<n>/comments --paginate`. Review bots often
+    post ONE comment and edit it as they re-review, so read each comment as
+    of its latest `updated_at` and take its findings of every severity, not
+    only the top ones.
+    An outdated thread has `line: null`: anchor it by `originalLine` and
+    re-locate the code at the head before folding.
     Keep only `isResolved: false` threads - already-resolved threads were
     presumably already addressed or deliberately dismissed; re-litigating
     them isn't this skill's job. From `reviews`, keep nodes with a non-empty
@@ -128,12 +142,17 @@ first and treat that as the resolution.
     feedback to fold) whose `id` is not listed in
     `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/folded-reviews.txt` -
     a review body cannot be resolved like a thread, so without that list
-    every later fold would re-fold the same old summary. If either set is
+    every later fold would re-fold the same old summary. From issue
+    comments, keep those that carry review findings about the code (skip
+    status or report bots such as coverage, CI summaries and deploy
+    previews), not written by the PR author, whose
+    `<id> <updated_at>` line is not in that same file - an edited comment
+    gets a new `updated_at` and is read again. If any of the three sets is
     non-empty, that combined content is the review content, go to step 2. Record each kept thread's `id` - step
     7 needs it to resolve the thread once the fix lands, or to reply on it
     when the fix lands elsewhere (top-level reviews have no thread either
-    way, so nothing to record there).
-  - Nothing in either set (empty PR, or review never posted to GitHub) -
+    way, so nothing to record there; neither do issue comments).
+  - Nothing in any set (empty PR, or review never posted to GitHub) -
     fall back to a local review file: look for `REVIEW-PR-<n>.md` at the
     project root first, then at
     the repo's own root for a manually-relocated file. Found - use it as
@@ -143,14 +162,19 @@ first and treat that as the resolution.
 ### 2. Spec the fixes
 
 Write `FOLD-PR-<n>-spec.md` at the project root (same location as
-`REVIEW-PR-<n>.md`).
+`REVIEW-PR-<n>.md`). If a previous one exists, read it first: a finding that
+comes back after being rejected there keeps that rejection and its reason,
+unless the review now gives a new argument.
 For every finding in the review content: record the thread ID captured in
 step 1, and give it exactly one of three dispositions - fixed in this PR (and
 how), fixed in a different PR or commit (and which), or explicitly rejected
 (and why). No silent drops, no blanket "addressed" without substance. Step 7
 keys on that three-way split, because only the first case may resolve a
 thread and the other two get a reply instead, and a finding with no thread ID
-recorded gets neither. This spec file is a local scratch artifact: never
+recorded gets neither. "Defer to a follow-up" is not a disposition: every
+finding is fixed in this fold or rejected with a stated reason, and "fixed
+in a different PR or commit" names a fix that already exists. Nits are
+folded by default; "only a nit" is not a rejection reason. This spec file is a local scratch artifact: never
 commit it, never push it onto the PR - which is exactly why the reasoning has
 to reach the PR as a reply, since nothing else here does.
 
@@ -382,8 +406,8 @@ because resolving a thread asserts that the diff addressed it:
   ```
   gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:"<id>"}) { thread { isResolved } } }'
   ```
-  A top-level review body has no thread to resolve; its findings are closed
-  out by the pushed fix and the step 8 report.
+  A top-level review body or issue comment has no thread to resolve; its
+  findings are closed out by the pushed fix and the step 8 report.
 - **Fixed in a different PR or commit, or explicitly rejected** - never
   resolve it, reply on the thread instead (below). A fix that lives somewhere
   else is not in this diff, so resolving would tell the next reader the
@@ -392,7 +416,8 @@ because resolving a thread asserts that the diff addressed it:
 After the push succeeds, append the `id` of every review body the spec gave
 a disposition, whatever the disposition, to
 `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/folded-reviews.txt`
-(one per line, `mkdir -p` first) - that file is what step 1 skips on the
+(one per line, `mkdir -p` first), and `<id> <updated_at>` of every issue
+comment step 1 kept - that file is what step 1 skips on the
 next fold, and a body has no thread to carry a rejection, so a rejected one
 left out would be re-folded and possibly implemented next time. It lives
 beside `<outdir>`, not inside it, so cleanup keeps it.
@@ -421,8 +446,8 @@ reason:
   show it
 
 Bodies follow the reply voice in `../review/conventions.md`; use a
-style-rewrite tool when the environment provides one. A finding with no thread behind it - a top-level review body, or a
-local review file that was never posted to GitHub - has nothing to reply to,
+style-rewrite tool when the environment provides one. A finding with no thread behind it - a top-level review body, an issue
+comment, or a local review file that was never posted to GitHub - has nothing to reply to,
 and its reasoning reaches the reader through step 8's report only.
 
 **These replies are the one write in this flow that needs approval.** Write
@@ -445,6 +470,13 @@ is still not resolved - step 8 reports it as left open with no reply. A reply
 that fails to post is reported the same way a failed resolve is, not
 swallowed and not retried as a resolve.
 
+**PR description.** After the last push, compare the PR description (`gh pr
+view <n> --json body,author`) with `git diff <pre-fold-sha>..HEAD` and the
+spec, and pick out the lines the fold made wrong (changed behaviour, renamed
+flags, a limitation it removed). If the author is the gh user (`gh api user
+--jq .login`), rewrite only those lines and apply them with `gh pr edit <n>
+--body-file <outdir>/pr-body.md`; otherwise list them in step 8.
+
 On success, remove the worktree (`git worktree remove <repo>-worktrees/fold-<n>`)
 and delete `<outdir>` - step 8's report is written from it, so drop it once
 the report exists.
@@ -466,8 +498,8 @@ commit (naming which), or explicitly rejected (with reasons), the PR URL, the
 resolved-thread count (plus any that failed to resolve), and for every thread
 this diff did not fix either the URL of the reply posted on it or why none
 was (body declined, no thread behind that finding, or the post failed),
-and every unresolved thread or review body step 1 dropped for predating the
-review file.
+every unresolved thread or review body step 1 dropped for predating the
+review file, and the PR description lines updated or listed as stale.
 
 ## Error handling
 
@@ -503,7 +535,6 @@ review file.
 ## Out of scope
 
 - Ticket-ID input resolution.
-- Opening a new PR for the fixes - always folds into the existing branch.
 - An approval checkpoint before push.
 - Fork PRs (head branch lives in a different remote/fork than `origin`) -
   out of scope; would need an explicit different remote to push to.

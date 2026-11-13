@@ -291,3 +291,62 @@ def test_stack_scope_check_uses_recorded_shas_and_handles_squash_merged_parent()
     assert "--json files" not in stack
     assert "git diff --name-only <old-parent-tip>...<old-tip>" in stack
     assert "squash-merged" in stack and "git rebase --onto origin/<base>" in stack
+
+
+NEW_PR = FOLD.parent / "new-pr-mode.md"
+
+
+def test_fold_review_reads_issue_comments_and_approved_review_bodies():
+    """Edited bot comments are re-read by updated_at, approved reviews with a body count, and both are ledgered."""
+    block = _flat()
+    assert "gh api repos/<o>/<r>/issues/<n>/comments --paginate" in block
+    assert "latest `updated_at`" in block and "every severity" in block
+    assert "states: [CHANGES_REQUESTED, COMMENTED, APPROVED]" in block
+    assert block.count("`<id> <updated_at>`") == 2
+
+
+def test_fold_review_never_defers_and_folds_nits():
+    """Every finding is fixed in this fold or rejected with a reason; nits are folded."""
+    block = _flat()
+    assert '"Defer to a follow-up" is not a disposition' in block
+    assert "Nits are folded by default" in block
+
+
+def test_fold_review_new_pr_mode_for_merged_or_closed_prs():
+    """A merged or closed PR gets its fixes in a new draft PR, and folded threads point at it."""
+    block = _flat()
+    assert "merged or closed" in block and "new-pr-mode.md" in block
+    assert "Opening a new PR" not in block
+    mode = " ".join(NEW_PR.read_text().split())
+    for token in (
+        "defaultBranchRef",
+        "gh pr create --draft",
+        '"Fixed in #<new>."',
+        "nothing is resolved there",
+        "git fetch origin pull/<n>/head",
+        "FETCH_HEAD",
+    ):
+        assert token in mode, token
+
+
+def test_fold_review_updates_a_stale_pr_description():
+    """After the push, stale description lines are rewritten on the gh user's own PR, otherwise reported."""
+    block = _flat()
+    assert "gh pr edit <n> --body-file <outdir>/pr-body.md" in block
+    assert "otherwise list them in step 8" in block
+    assert "PR description lines updated or listed as stale" in block
+
+
+def test_fold_review_keeps_earlier_rejections_and_skips_status_bots():
+    """A re-read comment keeps a prior spec's rejections, and status or report bot comments are not findings."""
+    block = _flat()
+    assert "If a previous one exists, read it first" in block
+    assert "keeps that rejection and its reason" in block
+    assert "skip status or report bots" in block
+
+
+def test_outdated_threads_are_anchored_by_original_line():
+    """An outdated thread reports line null, so the query fetches originalLine and the text says to use it."""
+    block = _flat()
+    assert "isOutdated path line originalLine" in block
+    assert "anchor it by `originalLine`" in block
