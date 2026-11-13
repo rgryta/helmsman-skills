@@ -38,8 +38,9 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    request over 600000 ms for anything. When the formula would exceed the
    cap (n_prs >= 14), split the work into multiple batched Bash calls of at
    most 600000 ms each rather than backgrounding it. This setup covers every
-   PR in the stack before any dispatch - step 5 fires one combined wave for
-   the whole stack.
+   PR in the stack before any dispatch. A stack's dispatch waves, Phase 0
+   ordering and per-PR mode ("one agent per PR") follow
+   `<skill-dir>/../fold-review/stack-mode.md`; read it before step 3.
    Then create this round's artifact directory OUTSIDE every repo:
    `<outdir>` = `~/.helmsman/review-ledger/<owner>__<repo>__pr<n>/run-<epoch>/`
    via `mkdir -p`, with `<epoch>` from `date +%s`. Every artifact except the
@@ -67,7 +68,9 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
 3. **Phase 0 (deterministic, local, no CI dependency).** Follow
    `<skill-dir>/phase0-launch.md` (commit first, test runner, managed
    background launch of `scripts/run_phase0.py`, bounded collect, fallback
-   FACTS file). Do step 4 while it runs. SKIPPED sections are stated
+   FACTS file). Do step 4 while it runs. For a stack, launch one PR's
+   Phase 0 at a time (stack-mode.md) - parallel runs queue on the heavy-check
+   lock and skip, they do not finish sooner. SKIPPED sections are stated
    confidence ceilings, never silently ignored. An `ERROR:` section is not a
    ceiling: that check crashed, so its class went unhunted. Name the crashed
    check in the review and treat the round like a PARTIAL one.
@@ -80,10 +83,11 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    `--skip-review`, follow `skip-review.md` - only `project` and `landmine`
    run. Under `--inline`, follow `inline-mode.md` for how every layer runs.
    For a single PR that is the four layers below (two under
-   `--skip-review`). For a stack, run steps 2-4 for every PR first, then
-   combine every PR's layers into that same single message - `n_prs * 4`
-   parallel `Agent` calls (`n_prs * 2` under `--skip-review`, none under
-   `--inline`), never one wave per PR. Each prompt resolves `<worktree>`,
+   `--skip-review`). For a stack, run steps 2-4 for every PR, then send the
+   layers in waves of whole PRs, never more `Agent` calls in one message
+   than the CLI's cap in `stack-mode.md` (16 in Claude, 6 in Codex): a PR
+   joins the next wave once its FACTS exists, and each wave is collected in
+   step 6 before the next goes out. Each prompt resolves `<worktree>`,
    `<outdir>` and `<n>` to that PR's own paths and number, so
    `REVIEW-<n>-<layer>.md` files never collide. The `Agent` calls return at
    once, so treat every layer as backgrounded whatever `run_in_background`
@@ -122,7 +126,7 @@ Project root and worktree locations follow `<skill-dir>/conventions.md`
    Every dispatch prompt MUST include, with `<worktree>`, `<outdir>` and
    `<n>` resolved to their actual absolute paths and PR number (subagents
    do not inherit the orchestrator's cwd): "Do NOT post anything to GitHub.
-   Read <outdir>/CONTEXT-<n>.md and <outdir>/FACTS-<n>.md first. Write your
+   Do not spawn agents. Read <outdir>/CONTEXT-<n>.md and <outdir>/FACTS-<n>.md first. Write your
    findings to <outdir>/REVIEW-<n>-<layer>.md as your final action; its
    last non-blank line must be exactly COMPLETE, or PARTIAL: <reason> -
    only PARTIAL carries a reason."

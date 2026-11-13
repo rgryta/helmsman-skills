@@ -65,7 +65,8 @@ parallel where possible:
   library docs, WebSearch/WebFetch for service docs.
 - **Codebase** — dispatch a read-only exploration subagent to map the
   exact integration points (the template to mirror, the wiring seam, the
-  contracts, the config surface). Demand file:line citations.
+  contracts, the config surface). Demand file:line citations, and put
+  "Do not spawn agents." in its prompt.
 
 **Output:** a written understanding of the gaps + the load-bearing constraints.
 Surface any *decisive* external constraint (auth/credentials, a provisioning
@@ -114,13 +115,14 @@ on the model in `../review/model-choice.md`. These are the same `hunter` and `ed
 the calls return at once, so keep each task id, never address an agent by
 name or collect it via SendMessage relays (idle notifications have stalled
 here with no result ever routing back), and read results only from disk. For
-N specs, dispatch 2N of these in ONE message (two per spec) - nothing else in
-this phase proceeds until all are collected. Delete any existing
+N specs, dispatch 2N of these (two per spec) in as few messages as the
+per-CLI cap in `../fold-review/stack-mode.md` allows (16 in Claude, 6 in
+Codex) - nothing else in this phase proceeds until all are collected. Delete any existing
 `<spec-dir>/REVIEW-<spec-stem>-{hunter,edge}.md` first: a previous round's
 file already ends in COMPLETE and would be collected as this round's result.
 
 Adapt each prompt's "read CONTEXT/FACTS" preamble per dispatch to: "Do NOT
-post anything to GitHub. Read `<spec-path>` and the Phase 0 context notes
+post anything to GitHub. Do not spawn agents. Read `<spec-path>` and the Phase 0 context notes
 first (their actual absolute paths - you do not inherit the orchestrator's
 cwd). Apply your briefs to this spec text, additionally grounded in the verified Phase 0
 facts so it flags fiction, not just style. Write findings to
@@ -161,7 +163,8 @@ One worktree + one draft PR per spec. Branch off `origin/main`.
   units only, not the whole set.
 - **Delegate the bulk** of a large PR to an implementation subagent suited to
   the repository language, with the spec +
-  the exact template/seam + the gotchas below; then YOU verify gates, review the
+  the exact template/seam + the gotchas below, and "Do not spawn agents." in
+  its prompt; then YOU verify gates, review the
   diff, and commit locally. Subagents must NOT commit. Push each branch and open
   its **draft** PR right after its commit (see "Human involvement" — drafts are
   pre-authorized; no gate), then run Phase 4 over all of them. Do not stop
@@ -201,21 +204,19 @@ feeds that exact file to `fold-review`, which has no other channel for a
 cross-PR reattribution.
 
 **Fold**: for every PR left with genuine findings after triage, invoke
-`/helmsman-skills:fold-review <n>` directly, passing that PR's (possibly amended)
+`/helmsman-skills:fold-review <n>` directly (a stacked chain goes in one call, below), passing that PR's (possibly amended)
 `REVIEW-PR-<n>.md` as the local-file input. `fold-review` owns spec, spec
 review, implement, diff review, gate, push, and thread resolution end to
 end - do not reimplement any of that here. A PR whose `REVIEW-PR-<n>.md` is
 empty after triage needs no `fold-review` call.
 
-**Stack dependents**: after a `fold-review` run changes a PR that a stacked
-child depends on, rebase the child - `git fetch` then plain `git rebase
-<base-branch>` in the child's own worktree (`fold-review` only adds commits,
-never rewrites history, so no `--onto` needed; that form stays for the
-amended-parent gotcha below, a different scenario) - then re-run the
-child's own Phase 3 gates once. If a `fold-review` call itself fails or
-stops (gate failure, push rejection), that failure is `fold-review`'s own
-and already reported per its own contract - surface it here rather than
-swallowing it, and do not rebase dependents of a PR whose fold didn't land.
+**Stack dependents**: fold a stacked chain with ONE `fold-review` call
+passing each PR's triaged `REVIEW-PR-<n>.md`; its stack mode (`../fold-review/stack-mode.md`) folds
+bottom-up, rebases and verifies each dependent, pushes with a lease, and
+gates once at the chain tip - do not rebase dependents here. If that call
+fails or stops (gate failure, push rejection, a stopped rebase), the failure
+is `fold-review`'s own and already reported per its own contract - surface it
+here rather than swallowing it.
 
 This reviews the CODE (Phase 2 reviewed the design) — it catches real bugs
 (path-jail bypasses, silent-success-on-error, lock races) the spec review

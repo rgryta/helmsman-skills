@@ -1,7 +1,7 @@
 ---
 name: fold-review
 description: Use when PR review feedback needs to be folded back into fixes - "fold this review in", "address the PR feedback", "/helmsman-skills:fold-review <n>", or an existing review file's findings need to be implemented and pushed
-argument-hint: "<pr-number-or-link-or-file-path> [--inline] [--skip-review]"
+argument-hint: "<pr-number-or-link-or-file-path>... [--inline] [--skip-review]"
 allowed-tools: Bash, Read, Grep, Glob, Task, Write, Edit, Skill, Agent
 ---
 
@@ -32,9 +32,16 @@ problems, `fold-review` closes them out.
   step 5's full tier unless a sensitive path is touched. Only load either file when the matching flag was
   actually passed.
 
+**Stack mode.** When the input is several PRs, or a PR whose base is another
+open PR, read `stack-mode.md` (this skill's base dir) before step 1 and follow
+it: it folds only the named PRs bottom-up, rebases and verifies the whole
+chain, pushes with a lease, gates once at the chain tip, and caps every
+dispatch wave.
+
 ## Scope
 
-Accepts a local file path, or a PR number/link. Ticket-ID input is out of
+Accepts one or more inputs, each a local file path or a PR number/link;
+several inputs are a stack, one input per PR. Ticket-ID input is out of
 scope - no reliable ticket-to-PR mapping exists to query generically. Runs
 fully autonomously end to end: spec, spec review, implement, push, diff
 review, gate, resolve threads - no approval checkpoint before push, this is a
@@ -176,7 +183,7 @@ is needed for them (unlike `landmine-review` in step 5).
 There is no diff yet at this point - this review runs pre-implementation,
 same as today. Create `<outdir>` (defined in step 4; `mkdir -p` there is then
 a no-op) before dispatching. Adapt the dispatch prompt's "read CONTEXT/FACTS"
-preamble to: "Do NOT post anything to GitHub. Read `FOLD-PR-<n>-spec.md` and
+preamble to: "Do NOT post anything to GitHub. Do not spawn agents. Read `FOLD-PR-<n>-spec.md` and
 the original review content first (their actual absolute paths - you do not
 inherit the orchestrator's cwd). Apply your briefs to this spec text. Write
 findings to `<outdir>/REVIEW-<n>-spec-<layer>.md`; last non-blank line
@@ -240,7 +247,9 @@ commit, never a held push. If the push is rejected as non-fast-forward (the
 PR branch moved meanwhile), fetch the new tip, rebase the fold commits onto
 it, and retry once. Never `--force` or `--force-with-lease` here - this is
 someone else's open PR, not a scratch branch; a second rejection stops the
-flow (report, leave the worktree for inspection).
+flow (report, leave the worktree for inspection). The one exception is a
+stack fold's cascade push in `stack-mode.md`: `--force-with-lease` with an
+expected SHA, only on the gh user's own branches, after every rebase verified.
 
 ### 5. Review the diff
 
@@ -301,7 +310,7 @@ path matches the sensitive-path list, whatever the other sizing triggers say.
     instructions, no `model` override.
   Every prompt, with `<worktree>`, `<outdir>` and `<n>` resolved to actual
   absolute paths (dispatched subagents inherit no cwd): "Do NOT post
-  anything to GitHub. Read `<outdir>/CONTEXT-<n>.md` and
+  anything to GitHub. Do not spawn agents. Read `<outdir>/CONTEXT-<n>.md` and
   `<outdir>/FACTS-<n>.md` first. Write findings to
   `<outdir>/REVIEW-<n>-<layer>.md`; last non-blank line exactly COMPLETE
   or PARTIAL: <reason>."
@@ -480,7 +489,10 @@ review file.
   output, leave the worktree for inspection. The commits are already
   pushed; resolve no threads.
 - Push rejected as non-fast-forward (step 4 or 7) - rebase onto the new tip,
-  retry once; a second rejection stops the flow. Never `--force`/`--force-with-lease` onto someone else's PR.
+  retry once; a second rejection stops the flow. Never `--force`/`--force-with-lease` onto someone else's PR;
+  a stack fold's cascade push follows `stack-mode.md` instead.
+- Rebase stopped or unverified in a stack cascade - abort it, push nothing,
+  report (`stack-mode.md`).
 - Thread-resolve failure (step 7) - reported, not fatal.
 - Reply body declined or unanswered (step 7) - the thread stays unresolved
   and unanswered, reported in step 8. Never post an unapproved body, and
