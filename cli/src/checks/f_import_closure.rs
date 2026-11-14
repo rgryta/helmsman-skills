@@ -5,6 +5,7 @@ use std::time::Duration;
 use ruff_python_ast::{ElifElseClause, ExceptHandler, ModModule, PySourceType, Stmt};
 use ruff_python_parser::parse_unchecked_source;
 
+use crate::python::{falsy, py_type, read_utf8};
 use crate::{diff, env, python};
 
 const MAX_PROBED: usize = 20;
@@ -307,35 +308,6 @@ fn req_name(req: &str) -> Option<&str> {
     Some(&s[..end])
 }
 
-/// Python's type name for a value `tomllib` produced.
-pub(crate) fn py_type(v: &toml::Value) -> &'static str {
-    match v {
-        toml::Value::String(_) => "str",
-        toml::Value::Integer(_) => "int",
-        toml::Value::Float(_) => "float",
-        toml::Value::Boolean(_) => "bool",
-        toml::Value::Array(_) => "list",
-        toml::Value::Table(_) => "dict",
-        toml::Value::Datetime(d) => match (d.date, d.time) {
-            (Some(_), Some(_)) => "datetime.datetime",
-            (Some(_), None) => "datetime.date",
-            _ => "datetime.time",
-        },
-    }
-}
-
-pub(crate) fn falsy(v: &toml::Value) -> bool {
-    match v {
-        toml::Value::String(s) => s.is_empty(),
-        toml::Value::Integer(i) => *i == 0,
-        toml::Value::Float(f) => *f == 0.0,
-        toml::Value::Boolean(b) => !b,
-        toml::Value::Array(a) => a.is_empty(),
-        toml::Value::Table(t) => t.is_empty(),
-        toml::Value::Datetime(_) => false,
-    }
-}
-
 /// `list(v or [])`.
 fn py_list(v: Option<&toml::Value>) -> Result<Vec<toml::Value>, String> {
     let Some(v) = v.filter(|v| !falsy(v)) else {
@@ -382,35 +354,6 @@ fn names_dependencies(v: Option<&toml::Value>, minor: u32) -> Result<bool, Strin
             Err(format!(
                 "TypeError: argument of type '{}' is not {what}",
                 py_type(v)
-            ))
-        }
-    }
-}
-
-/// `Path.read_text()` as UTF-8, failing with the UnicodeDecodeError text CPython raises.
-pub(crate) fn read_utf8(path: &Path) -> Result<Option<String>, String> {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Ok(None);
-    };
-    match std::str::from_utf8(&bytes) {
-        Ok(s) => Ok(Some(s.replace("\r\n", "\n").replace('\r', "\n"))),
-        Err(e) => {
-            let pos = e.valid_up_to();
-            let first = bytes[pos];
-            let (len, reason) = match e.error_len() {
-                None => (bytes.len() - pos, "unexpected end of data"),
-                Some(1) if (0x80..=0xc1).contains(&first) || first >= 0xf5 => {
-                    (1, "invalid start byte")
-                }
-                Some(n) => (n, "invalid continuation byte"),
-            };
-            let what = if len == 1 {
-                format!("byte 0x{first:02x} in position {pos}")
-            } else {
-                format!("bytes in position {pos}-{}", pos + len - 1)
-            };
-            Err(format!(
-                "UnicodeDecodeError: 'utf-8' codec can't decode {what}: {reason}"
             ))
         }
     }

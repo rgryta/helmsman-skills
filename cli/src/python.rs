@@ -20,6 +20,15 @@ pub fn strip(s: &str) -> &str {
 
 /// `str.splitlines()`: `\r\n` is one break, and so are the rarer separators Python honours.
 pub fn splitlines(s: &str) -> Vec<&str> {
+    split_lines(s, false)
+}
+
+/// `str.splitlines(keepends=True)`.
+pub fn splitlines_keepends(s: &str) -> Vec<&str> {
+    split_lines(s, true)
+}
+
+fn split_lines(s: &str, keepends: bool) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
     let mut chars = s.char_indices().peekable();
@@ -39,17 +48,121 @@ pub fn splitlines(s: &str) -> Vec<&str> {
         if !breaks {
             continue;
         }
-        lines.push(&s[start..i]);
-        start = i + c.len_utf8();
+        let mut end = i + c.len_utf8();
         if c == '\r' && chars.peek().map(|&(_, n)| n) == Some('\n') {
             chars.next();
-            start += 1;
+            end += 1;
         }
+        lines.push(&s[start..if keepends { end } else { i }]);
+        start = end;
     }
     if start < s.len() {
         lines.push(&s[start..]);
     }
     lines
+}
+
+/// `shlex.split(s)`, or the ValueError message it raises.
+pub fn shlex_split(s: &str) -> Result<Vec<String>, &'static str> {
+    const CLOSE: &str = "No closing quotation";
+    const ESCAPE: &str = "No escaped character";
+    let mut out = Vec::new();
+    let mut token: Option<String> = None;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' | '\r' | '\n' => out.extend(token.take()),
+            '\\' => token
+                .get_or_insert_default()
+                .push(chars.next().ok_or(ESCAPE)?),
+            '\'' => {
+                let t = token.get_or_insert_default();
+                loop {
+                    match chars.next().ok_or(CLOSE)? {
+                        '\'' => break,
+                        n => t.push(n),
+                    }
+                }
+            }
+            '"' => {
+                let t = token.get_or_insert_default();
+                loop {
+                    match chars.next().ok_or(CLOSE)? {
+                        '"' => break,
+                        '\\' => match chars.next().ok_or(ESCAPE)? {
+                            n @ ('"' | '\\') => t.push(n),
+                            n => {
+                                t.push('\\');
+                                t.push(n);
+                            }
+                        },
+                        n => t.push(n),
+                    }
+                }
+            }
+            _ => token.get_or_insert_default().push(c),
+        }
+    }
+    out.extend(token);
+    Ok(out)
+}
+
+/// Python's type name for a value `tomllib` produced.
+pub fn py_type(v: &toml::Value) -> &'static str {
+    match v {
+        toml::Value::String(_) => "str",
+        toml::Value::Integer(_) => "int",
+        toml::Value::Float(_) => "float",
+        toml::Value::Boolean(_) => "bool",
+        toml::Value::Array(_) => "list",
+        toml::Value::Table(_) => "dict",
+        toml::Value::Datetime(d) => match (d.date, d.time) {
+            (Some(_), Some(_)) => "datetime.datetime",
+            (Some(_), None) => "datetime.date",
+            _ => "datetime.time",
+        },
+    }
+}
+
+pub fn falsy(v: &toml::Value) -> bool {
+    match v {
+        toml::Value::String(s) => s.is_empty(),
+        toml::Value::Integer(i) => *i == 0,
+        toml::Value::Float(f) => *f == 0.0,
+        toml::Value::Boolean(b) => !b,
+        toml::Value::Array(a) => a.is_empty(),
+        toml::Value::Table(t) => t.is_empty(),
+        toml::Value::Datetime(_) => false,
+    }
+}
+
+/// `Path.read_text()` as UTF-8, failing with the UnicodeDecodeError text CPython raises.
+pub fn read_utf8(path: &Path) -> Result<Option<String>, String> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Ok(None);
+    };
+    match std::str::from_utf8(&bytes) {
+        Ok(s) => Ok(Some(s.replace("\r\n", "\n").replace('\r', "\n"))),
+        Err(e) => {
+            let pos = e.valid_up_to();
+            let first = bytes[pos];
+            let (len, reason) = match e.error_len() {
+                None => (bytes.len() - pos, "unexpected end of data"),
+                Some(1) if (0x80..=0xc1).contains(&first) || first >= 0xf5 => {
+                    (1, "invalid start byte")
+                }
+                Some(n) => (n, "invalid continuation byte"),
+            };
+            let what = if len == 1 {
+                format!("byte 0x{first:02x} in position {pos}")
+            } else {
+                format!("bytes in position {pos}-{}", pos + len - 1)
+            };
+            Err(format!(
+                "UnicodeDecodeError: 'utf-8' codec can't decode {what}: {reason}"
+            ))
+        }
+    }
 }
 
 /// Python allows `_` only between two digits in a numeric literal string.
@@ -278,6 +391,26 @@ mod tests {
         assert_eq!(splitlines("a\n\nb\n"), ["a", "", "b"]);
         assert_eq!(splitlines("a\x0cb\u{2028}c"), ["a", "b", "c"]);
         assert!(splitlines("").is_empty());
+        assert_eq!(
+            splitlines_keepends("a\r\nb\rc\x0cd"),
+            ["a\r\n", "b\r", "c\x0c", "d"]
+        );
+    }
+
+    #[test]
+    fn shlex_split_matches_python() {
+        assert_eq!(
+            shlex_split(r#" a 'b c' "d\"e\x" f\ g '' "#).unwrap(),
+            ["a", "b c", "d\"e\\x", "f g", ""]
+        );
+        assert_eq!(
+            shlex_split("  a'b c'\"d\\\"e\\x\" '' \\ f ").unwrap(),
+            ["ab cd\"e\\x", "", " f"]
+        );
+        assert!(shlex_split("").unwrap().is_empty());
+        assert!(shlex_split(" \t\n").unwrap().is_empty());
+        assert_eq!(shlex_split("'a"), Err("No closing quotation"));
+        assert_eq!(shlex_split("a\\"), Err("No escaped character"));
     }
 
     #[test]
