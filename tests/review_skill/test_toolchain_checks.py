@@ -1,11 +1,12 @@
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
 
-from .conftest import _git, commit_all
+from .conftest import _git, commit_all, gone_within, posix_only, skip_shims_on_windows
 from .test_phase0 import load
 
 
@@ -60,6 +61,7 @@ def test_ruff_line_parser_accepts_older_ruff_syntax_errors():
     assert pattern.match("m.py:1:13: SyntaxError: Expected ')', found newline")
 
 
+@posix_only
 def test_uvx_fallback_fires_when_primary_missing(fixture_repo, tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -77,6 +79,7 @@ def test_uvx_fallback_fires_when_primary_missing(fixture_repo, tmp_path, monkeyp
     assert "FAKE-UVX-RAN" in out
 
 
+@posix_only
 def test_ruff_broken_output_skips_not_findings(fixture_repo, tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -100,6 +103,7 @@ def test_ruff_broken_output_skips_not_findings(fixture_repo, tmp_path, monkeypat
     assert "ruff failed" in out
 
 
+@posix_only
 def test_pyright_no_error_lines_skips_empty_findings(
     fixture_repo, tmp_path, monkeypatch
 ):
@@ -144,6 +148,7 @@ def test_pytest_says_so_when_no_test_maps_to_the_change(fixture_repo):
     assert "pkg/mod.py" in out
 
 
+@posix_only
 def test_pytest_infra_failure_is_skipped_not_fail(fixture_repo, tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -168,6 +173,7 @@ def test_pytest_infra_failure_is_skipped_not_fail(fixture_repo, tmp_path, monkey
     assert "SKIPPED (test runner infra unavailable" in out
 
 
+@posix_only
 def test_pytest_bare_connection_refused_is_not_runner_infra(
     fixture_repo, tmp_path, monkeypatch
 ):
@@ -195,6 +201,7 @@ def test_pytest_bare_connection_refused_is_not_runner_infra(
     assert "test runner infra unavailable" not in out
 
 
+@posix_only
 def test_pytest_hypothesis_health_check_is_load_not_a_failure(
     fixture_repo, tmp_path, monkeypatch
 ):
@@ -223,6 +230,7 @@ def test_pytest_hypothesis_health_check_is_load_not_a_failure(
     assert "FAIL" not in out
 
 
+@posix_only
 def test_pytest_app_deadline_exceeded_stays_a_failure(
     fixture_repo, tmp_path, monkeypatch
 ):
@@ -367,6 +375,7 @@ def test_deferred_imports_are_framed_as_candidates(tmp_path):
 
 
 def _shim(bin_dir, name, body):
+    skip_shims_on_windows()
     p = bin_dir / name
     p.write_text(body)
     p.chmod(0o755)
@@ -374,6 +383,7 @@ def _shim(bin_dir, name, body):
 
 
 def _isolated_bin(tmp_path, monkeypatch):
+    skip_shims_on_windows()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _shim(bin_dir, "git", "#!/bin/sh\necho pkg/mod.py\n")
@@ -385,6 +395,7 @@ def _isolated_bin(tmp_path, monkeypatch):
 
 
 def _fake_venv(repo, with_pyright=None):
+    skip_shims_on_windows()
     venv_bin = repo / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
     _shim(venv_bin, "python", "#!/bin/sh\nexit 0\n")
@@ -829,3 +840,21 @@ def _gone_within(pid, seconds):
             return True
         time.sleep(0.05)
     return False
+
+
+def test_run_cmd_timeout_kills_the_tools_whole_process_tree(tmp_path):
+    """A timed-out tool's own children die with it: a process group on POSIX, taskkill /T on Windows."""
+    pid_file = tmp_path / "grandchild.pid"
+    sleeper = "import time; time.sleep(60)"
+    spawner = (
+        "import pathlib, subprocess, sys, time\n"
+        f"p = subprocess.Popen([sys.executable, '-c', {sleeper!r}])\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))\n"
+        "time.sleep(60)\n"
+    )
+    d = load("_diff", "checks/_diff.py")
+    assert d.run_cmd([sys.executable, "-c", spawner], str(tmp_path), 5) == (
+        -1,
+        "TIMEOUT",
+    )
+    assert gone_within(int(pid_file.read_text()), seconds=5)

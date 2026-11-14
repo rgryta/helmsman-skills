@@ -9,7 +9,7 @@ import zipfile
 import pytest
 import yaml
 
-from .conftest import CLI_MANIFEST, SCRIPTS
+from .conftest import CLI_MANIFEST, SCRIPTS, skip_shims_on_windows
 from .test_cli import _fake_cli
 from .test_phase0 import load
 
@@ -23,6 +23,7 @@ def _version():
 
 
 def _fake_binary(version):
+    skip_shims_on_windows()
     return f"#!{sys.executable}\nprint('helmsman {version}')\n".encode()
 
 

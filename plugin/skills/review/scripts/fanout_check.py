@@ -46,7 +46,7 @@ def scan(text):
 
 def render(path):
     try:
-        text = Path(path).read_text()
+        text = Path(path).read_text(encoding="utf-8")
     except OSError as e:
         return f"FANOUT: unreadable ({type(e).__name__}) - treated as fan-out", 0
     hits, suppressed = scan(text)

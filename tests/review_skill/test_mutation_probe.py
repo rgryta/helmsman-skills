@@ -1,4 +1,3 @@
-import os
 import shutil
 import signal
 import subprocess
@@ -8,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import SCRIPTS, _git, commit_all
+from .conftest import NEW_GROUP, SCRIPTS, _git, commit_all, posix_only, stop
 from .test_phase0 import load
 from .test_toolchain_checks import _isolated_bin, _shim
 
@@ -214,6 +213,7 @@ def test_sigterm_restores_mutated_file_before_exit(fixture_repo):
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        **NEW_GROUP,
     )
     try:
         deadline = time.monotonic() + 20
@@ -227,7 +227,7 @@ def test_sigterm_restores_mutated_file_before_exit(fixture_repo):
             time.sleep(0.1)
         if not mutated_seen:
             pytest.fail("mutant file was never observed before the process exited")
-        proc.send_signal(signal.SIGTERM)
+        stop(proc)
         proc.wait(timeout=10)
     finally:
         if proc.poll() is None:
@@ -351,6 +351,7 @@ def test_unrelated_red_test_never_counts_mutants_as_killed(fixture_repo):
     assert "pkg tests exit 1 with no mutant" in out
 
 
+@posix_only
 def test_project_runner_is_used_for_mutants(fixture_repo, tmp_path, monkeypatch):
     """HELMSMAN_PYTEST_RUNNER replaces plain pytest here as it does in c_pytest."""
     runner = tmp_path / "runner.sh"
@@ -419,23 +420,27 @@ def test_a_timed_out_baseline_is_not_described_as_a_failing_suite(
 
 
 def test_stop_handler_ignores_a_repeat_stop_during_restore():
-    """Once the stop handler fires, a second SIGTERM or SIGINT cannot interrupt the restore."""
+    """Once the stop handler fires, a second stop signal or SIGINT cannot interrupt the restore."""
     mod = load("h_mutation", "checks/h_mutation.py")
-    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    saved = {s: signal.getsignal(s) for s in mod.STOP_SIGNALS}
     try:
         with pytest.raises(mod._Terminated):
-            mod._raise_terminated(signal.SIGTERM, None)
-        assert signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
-        assert signal.getsignal(signal.SIGINT) == signal.SIG_IGN
+            mod._raise_terminated(mod.STOP_SIGNALS[0], None)
+        assert all(signal.getsignal(s) == signal.SIG_IGN for s in mod.STOP_SIGNALS)
     finally:
         for s, handler in saved.items():
             signal.signal(s, handler)
 
 
+@pytest.mark.parametrize("sigmask", [True, False], ids=["sigmask", "no-sigmask"])
 def test_stop_arriving_mid_restore_still_leaves_the_file_whole(
-    fixture_repo, monkeypatch
+    fixture_repo, monkeypatch, sigmask
 ):
-    """A first SIGTERM landing during the write-back is held until the original bytes are on disk."""
+    """A first stop landing during the write-back is held until the original bytes are on disk, with or without a signal mask (Windows)."""
+    if sigmask and not hasattr(signal, "pthread_sigmask"):
+        pytest.skip("no signal mask on this platform")
+    if not sigmask:
+        monkeypatch.delattr(signal, "pthread_sigmask", raising=False)
     mod_path = fixture_repo / "pkg" / "mod.py"
     mod_path.write_text("def check_guard(n):\n    return n > 10\n")
     commit_all(fixture_repo)
@@ -446,11 +451,11 @@ def test_stop_arriving_mid_restore_still_leaves_the_file_whole(
 
     def write_then_stopped(self, data):
         if data == original:
-            os.kill(os.getpid(), signal.SIGTERM)
+            signal.raise_signal(mod.STOP_SIGNALS[0])
         return real_write(self, data)
 
     monkeypatch.setattr(Path, "write_bytes", write_then_stopped)
-    saved = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    saved = {s: signal.getsignal(s) for s in mod.STOP_SIGNALS}
     try:
         out = mod.run(str(fixture_repo), "origin/main")
     finally:

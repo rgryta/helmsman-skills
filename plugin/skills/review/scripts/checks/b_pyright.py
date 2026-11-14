@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ def run(worktree, base):
     tools = []
     if python:
         flags = ["--pythonpath", python, *flags]
-        pinned = Path(python).with_name("pyright")
+        pinned = Path(python).with_name("pyright.exe" if os.name == "nt" else "pyright")
         if pinned.exists():
             tools.append([str(pinned)])
     tools += [["pyright"], ["uvx", "pyright"]]

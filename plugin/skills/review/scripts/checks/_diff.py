@@ -16,16 +16,22 @@ def _exit_on_signal(signum, _frame):
 
 
 # tools run in their own session, so a SIGTERM aimed at this check must unwind run_cmd to reach them
+STOP_SIGNAL = signal.SIGBREAK if os.name == "nt" else signal.SIGTERM
 if (
     threading.current_thread() is threading.main_thread()
-    and signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+    and signal.getsignal(STOP_SIGNAL) is signal.SIG_DFL
 ):
-    signal.signal(signal.SIGTERM, _exit_on_signal)
+    signal.signal(STOP_SIGNAL, _exit_on_signal)
 
 
 def _kill_group(proc):
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGKILL)
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True
+        )
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
     with contextlib.suppress(subprocess.TimeoutExpired):
         proc.communicate(timeout=5)
 

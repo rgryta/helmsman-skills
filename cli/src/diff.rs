@@ -42,11 +42,17 @@ pub fn run(args: &[&str], cwd: &str, timeout: Duration) -> Result<Output, RunErr
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        group::install_sigterm_handler();
         cmd.process_group(0);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x200;
+        // a shared console group would end the tool before a stop handler records the stop
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+    group::install_stop_handler();
     let mut child = cmd.spawn().map_err(RunError::Spawn)?;
-    #[cfg(unix)]
     let _tracked = group::Tracked::new(child.id());
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
         thread::spawn(move || {
@@ -84,25 +90,44 @@ fn kill_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// Windows has no process groups here: only the direct child is killed.
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn kill_tree(child: &mut std::process::Child) {
+    group::kill(child.id() as i32);
     let _ = child.kill();
     let _ = child.wait();
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+pub type CtrlHandler = unsafe extern "system" fn(u32) -> i32;
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    pub fn SetConsoleCtrlHandler(handler: Option<CtrlHandler>, add: i32) -> i32;
+}
+
 mod group {
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::sync::Once;
 
     static GROUPS: [AtomicI32; 64] = [const { AtomicI32::new(0) }; 64];
 
+    #[cfg(unix)]
     pub fn kill(pgid: i32) {
         unsafe { libc::kill(-pgid, libc::SIGKILL) };
     }
 
-    /// Registers a live tool group so a SIGTERM to this process kills it before exiting.
+    /// Windows has no process group to signal, so taskkill walks the tool's tree instead.
+    #[cfg(windows)]
+    pub fn kill(pid: i32) {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    /// Registers a live tool group so a stop sent to this process kills it before exiting.
     pub struct Tracked(Option<usize>);
 
     impl Tracked {
@@ -123,7 +148,7 @@ mod group {
         }
     }
 
-    /// Async-signal-safe: only atomics and kill(2).
+    /// Async-signal-safe on Unix: only atomics and kill(2).
     pub fn kill_all() {
         for g in &GROUPS {
             let pgid = g.load(Ordering::SeqCst);
@@ -133,13 +158,15 @@ mod group {
         }
     }
 
+    #[cfg(unix)]
     extern "C" fn on_sigterm(_: libc::c_int) {
         kill_all();
         unsafe { libc::_exit(128 + libc::SIGTERM) };
     }
 
     /// Only takes over SIGTERM while it is still at its default disposition.
-    pub fn install_sigterm_handler() {
+    #[cfg(unix)]
+    pub fn install_stop_handler() {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| unsafe {
             let mut old: libc::sigaction = std::mem::zeroed();
@@ -154,10 +181,27 @@ mod group {
             libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
         });
     }
+
+    /// Returning 0 passes the event on to earlier handlers, a stop handler that claims it or the default exit.
+    #[cfg(windows)]
+    unsafe extern "system" fn on_ctrl(_event: u32) -> i32 {
+        kill_all();
+        0
+    }
+
+    #[cfg(windows)]
+    pub fn install_stop_handler() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| unsafe {
+            super::SetConsoleCtrlHandler(Some(on_ctrl), 1);
+        });
+    }
 }
 
+#[cfg(windows)]
+pub use group::install_stop_handler;
+
 /// Kill every tool group `run` has running; safe to call from a signal handler.
-#[cfg(unix)]
 pub fn kill_running_tools() {
     group::kill_all();
 }

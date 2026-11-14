@@ -98,7 +98,7 @@ def main(argv):
         try:
             found = [
                 r
-                for r in collect(Path(f).read_text())
+                for r in collect(Path(f).read_text(encoding="utf-8"))
                 # a bare `host.com:8080` is not a file unless the repo tracks such files
                 if "/" in r[0] or Path(r[0]).suffix in exts
             ]

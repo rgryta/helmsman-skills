@@ -2,7 +2,7 @@ import json
 import subprocess
 import sys
 
-from .conftest import SCRIPTS, assert_parity, ported_checks
+from .conftest import SCRIPTS, assert_parity, ported_checks, skip_shims_on_windows
 from .test_phase0 import load
 
 
@@ -14,6 +14,7 @@ def _python_checks(tmp_path):
 
 
 def _fake_cli(path, listing_exit=0):
+    skip_shims_on_windows()
     path.write_text(
         f"#!{sys.executable}\n"
         "import sys\n"

@@ -724,12 +724,28 @@ mod stop {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 mod stop {
-    pub fn install() {}
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static STOP: AtomicI32 = AtomicI32::new(0);
+
+    /// Runs on a console-created thread; claiming the event keeps the process alive to restore.
+    unsafe extern "system" fn on_ctrl(event: u32) -> i32 {
+        let sig = if event == 0 { 2 } else { 21 }; // SIGINT or SIGBREAK, the numbers Python reports
+        let _ = STOP.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
+        crate::diff::kill_running_tools();
+        1
+    }
+
+    /// Registered after the tool handler so it runs first: the stop is recorded before tools die.
+    pub fn install() {
+        crate::diff::install_stop_handler();
+        unsafe { crate::diff::SetConsoleCtrlHandler(Some(on_ctrl), 1) };
+    }
 
     pub fn signal() -> Option<i32> {
-        None
+        Some(STOP.load(Ordering::SeqCst)).filter(|&s| s != 0)
     }
 }
 

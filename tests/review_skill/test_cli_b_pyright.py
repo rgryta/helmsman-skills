@@ -3,7 +3,13 @@ import subprocess
 
 import pytest
 
-from .conftest import CLI_MANIFEST, _git, assert_parity
+from .conftest import (
+    CLI_MANIFEST,
+    _git,
+    assert_parity,
+    posix_only,
+    skip_shims_on_windows,
+)
 
 needs_pyright = pytest.mark.skipif(
     not (shutil.which("pyright") or shutil.which("uvx")), reason="no pyright/uvx"
@@ -45,12 +51,14 @@ def test_rust_port_matches_python_with_real_pyright(case, helmsman_cli, fixture_
 
 
 def _shim(path, body):
+    skip_shims_on_windows()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n" + body)
     path.chmod(0o755)
 
 
 def _bin_dir(tmp_path, monkeypatch, **tools):
+    skip_shims_on_windows()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name in ("git", "sh", "sleep"):
@@ -145,6 +153,7 @@ def test_rust_port_matches_python_on_custom_venv_dir(
     assert_parity(helmsman_cli, "b_pyright", fixture_repo)
 
 
+@posix_only
 def test_rust_port_matches_python_on_non_executable_pinned_pyright(
     helmsman_cli, fixture_repo, tmp_path, monkeypatch
 ):

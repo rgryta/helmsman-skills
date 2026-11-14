@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from .conftest import CLI_MANIFEST, _git, assert_parity
+from .conftest import CLI_MANIFEST, _git, assert_parity, skip_shims_on_windows
 
 needs_semgrep = pytest.mark.skipif(
     not shutil.which("semgrep"), reason="semgrep not on PATH"
@@ -44,6 +44,7 @@ def _split(community, local):
 
 
 def _bin_dir(tmp_path, monkeypatch, **tools):
+    skip_shims_on_windows()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name in ("git", "sh", "cat"):

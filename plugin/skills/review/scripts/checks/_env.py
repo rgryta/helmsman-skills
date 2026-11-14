@@ -24,7 +24,11 @@ def ensure_project_env(worktree, timeout=SYNC_TIMEOUT_S):
     changes type-checks against the other branch's copy.
     """
     root = Path(worktree)
-    python = Path(root, os.environ.get("UV_PROJECT_ENVIRONMENT", ".venv"), "bin/python")
+    python = Path(
+        root,
+        os.environ.get("UV_PROJECT_ENVIRONMENT", ".venv"),
+        "Scripts/python.exe" if os.name == "nt" else "bin/python",
+    )
     synced = None
     if not (root / "uv.lock").exists():
         note = "no worktree env, no uv.lock"
@@ -72,7 +76,8 @@ def pytest_commands(worktree, pkg, python=None):
     workspace = (root / "uv.lock").exists() and Path(pkg) != root
     dist = _dist_name(pkg) if workspace else None
     cmds = [["uv", "run", "--no-sync", "--package", dist, "pytest"]] if dist else []
-    pinned = Path(python).with_name("pytest") if python else None
+    pytest = "pytest.exe" if os.name == "nt" else "pytest"
+    pinned = Path(python).with_name(pytest) if python else None
     if pinned and pinned.exists():
         cmds.append([str(pinned)])
     return cmds + [["pytest"], ["uv", "run", "--no-sync", "pytest"]]

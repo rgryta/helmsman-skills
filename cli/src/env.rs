@@ -7,6 +7,11 @@ use crate::{diff, python};
 
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(150);
 pub const RUNNER_ENV: &str = "HELMSMAN_PYTEST_RUNNER";
+const VENV_PYTHON: &str = if cfg!(windows) {
+    "Scripts/python.exe"
+} else {
+    "bin/python"
+};
 
 pub struct ProjectEnv {
     pub python: Option<String>,
@@ -55,7 +60,7 @@ pub fn which(program: &str) -> Option<PathBuf> {
 pub fn ensure_project_env(worktree: &str, timeout: Duration) -> ProjectEnv {
     let root = Path::new(worktree);
     let venv = std::env::var("UV_PROJECT_ENVIRONMENT").unwrap_or_else(|_| ".venv".into());
-    let python = root.join(venv).join("bin/python");
+    let python = root.join(venv).join(VENV_PYTHON);
     let mut synced = None;
     let note = if !root.join("uv.lock").exists() {
         "no worktree env, no uv.lock".to_string()
@@ -162,7 +167,9 @@ pub fn pytest_commands(root: &Path, pkg: &Path, python: Option<&str>) -> Result<
         t.extend([d, Arg::Str("pytest".into())]);
         cmds.push(t);
     }
-    if let Some(pinned) = python.map(|p| Path::new(p).with_file_name("pytest")) {
+    if let Some(pinned) = python
+        .map(|p| Path::new(p).with_file_name(format!("pytest{}", std::env::consts::EXE_SUFFIX)))
+    {
         if pinned.exists() {
             cmds.push(vec![Arg::Str(pinned.to_string_lossy().into_owned())]);
         }
@@ -233,8 +240,9 @@ mod tests {
         let env = ensure_project_env(d, SYNC_TIMEOUT);
         assert!(env.python.is_none() && !env.trusted);
         assert_eq!(env.note, "no worktree env, no uv.lock");
-        fs::create_dir_all(dir.join(".venv/bin")).unwrap();
-        fs::write(dir.join(".venv/bin/python"), "").unwrap();
+        let python = dir.join(".venv").join(VENV_PYTHON);
+        fs::create_dir_all(python.parent().unwrap()).unwrap();
+        fs::write(python, "").unwrap();
         let env = ensure_project_env(d, SYNC_TIMEOUT);
         assert!(env.python.is_some() && env.trusted);
         assert_eq!(env.note, "worktree .venv, no lockfile to verify it against");

@@ -7,13 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import SCRIPTS, _git, commit_all
+from .conftest import SCRIPTS, _git, commit_all, skip_shims_on_windows
 
 PR = 7
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
+    skip_shims_on_windows()
     seed = tmp_path / "seed"
     seed.mkdir()
     _git(seed, "init", "-b", "main")

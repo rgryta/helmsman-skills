@@ -3,7 +3,13 @@ import subprocess
 
 import pytest
 
-from .conftest import CLI_MANIFEST, _git, assert_parity
+from .conftest import (
+    CLI_MANIFEST,
+    _git,
+    assert_parity,
+    posix_only,
+    skip_shims_on_windows,
+)
 
 needs_vulture = pytest.mark.skipif(
     not (shutil.which("vulture") or shutil.which("uvx")), reason="no vulture/uvx"
@@ -50,6 +56,7 @@ def test_rust_port_matches_python_with_real_vulture(case, helmsman_cli, fixture_
 
 
 def _bin_dir(tmp_path, monkeypatch, **tools):
+    skip_shims_on_windows()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name in ("git", "sh", "sleep"):
@@ -128,6 +135,7 @@ def test_rust_port_matches_python_on_own_history(helmsman_cli):
     assert_parity(helmsman_cli, "e_dead_code", CLI_MANIFEST.parents[1], base=head)
 
 
+@posix_only
 @pytest.mark.parametrize("uvx", [None, "echo FAKE-UVX-RAN\nexit 1\n"])
 def test_rust_port_matches_python_on_non_executable_vulture(
     uvx, helmsman_cli, fixture_repo, tmp_path, monkeypatch

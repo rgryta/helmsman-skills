@@ -350,7 +350,7 @@ PLACEHOLDER = (
 
 def classify(tmp_path, name, text):
     f = tmp_path / name
-    f.write_text(text)
+    f.write_text(text, encoding="utf-8")
     return led(tmp_path, "classify-report", "--file", str(f)).stdout.strip()
 
 

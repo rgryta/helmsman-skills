@@ -4,7 +4,15 @@ import sys
 
 import pytest
 
-from .conftest import CLI_MANIFEST, SCRIPTS, _git, assert_parity, commit_all
+from .conftest import (
+    CLI_MANIFEST,
+    SCRIPTS,
+    _git,
+    assert_parity,
+    commit_all,
+    posix_only,
+    skip_shims_on_windows,
+)
 
 ECHO_OK = '#!/bin/sh\nfor i in 1 2 3 4 5 6 7 8; do echo "line $i $*"; done\nexit 0\n'
 SPAWN_FAIL = (
@@ -22,6 +30,7 @@ def _write(repo, rel, body=""):
 
 def _bin(tmp_path, monkeypatch, **tools):
     """A PATH holding only git, sh and the given shims, so no real pytest or uv can run."""
+    skip_shims_on_windows()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     for name in ("git", "sh", "sleep", "kill"):
@@ -242,6 +251,7 @@ def test_rust_port_matches_python_with_a_workspace_name_and_no_uv(
     assert_parity(helmsman_cli, "c_pytest", fixture_repo)
 
 
+@posix_only
 def test_rust_port_matches_python_with_the_pinned_venv_pytest(
     helmsman_cli, fixture_repo, tmp_path, monkeypatch
 ):
@@ -256,6 +266,7 @@ def test_rust_port_matches_python_with_the_pinned_venv_pytest(
     assert_parity(helmsman_cli, "c_pytest", fixture_repo)
 
 
+@posix_only
 @pytest.mark.parametrize("budget", ["nope", "30", "45"])
 def test_rust_port_matches_python_on_budget(
     budget, helmsman_cli, fixture_repo, tmp_path, monkeypatch

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import _git, assert_parity, commit_all
+from .conftest import _git, assert_parity, commit_all, posix_only, skip_shims_on_windows
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = '[project]\nname = "pkg"\nversion = "0"\n'
@@ -28,6 +28,7 @@ def _deps(extra, body="import somepkg\n"):
 
 
 def _venv_python(repo, script):
+    skip_shims_on_windows()
     _write(repo, ".venv/bin/python", script)
     (repo / ".venv" / "bin" / "python").chmod(0o755)
 
@@ -181,6 +182,7 @@ def test_pre_existing_deferred_import_matches(helmsman_cli, fixture_repo):
     assert_parity(helmsman_cli, "f_import_closure", fixture_repo)
 
 
+@posix_only
 def test_failed_sync_distrusts_the_repo_env(
     helmsman_cli, fixture_repo, tmp_path, monkeypatch
 ):

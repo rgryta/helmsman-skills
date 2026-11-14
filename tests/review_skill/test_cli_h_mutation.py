@@ -6,7 +6,17 @@ import time
 
 import pytest
 
-from .conftest import CLI_MANIFEST, SCRIPTS, _git, assert_parity
+from .conftest import (
+    CLI_MANIFEST,
+    NEW_GROUP,
+    SCRIPTS,
+    _git,
+    assert_parity,
+    commit_all,
+    skip_shims_on_windows,
+    stop,
+)
+from .test_phase0 import needs_pytest
 
 GUARD = "def check_guard(n):\n    return n > 10\n"
 MUTATED = "git diff --quiet && exit 0\n"
@@ -49,6 +59,7 @@ def _write(repo, rel, body):
 
 
 def _bin(tmp_path, monkeypatch, **tools):
+    skip_shims_on_windows()
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     for name in ("git", "sh", "sleep"):
@@ -193,3 +204,35 @@ def test_rust_port_matches_python_on_own_history(helmsman_cli, tmp_path, monkeyp
     _bin(tmp_path, monkeypatch, pytest="exit 0\n")
     monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(tmp_path / "no-venv"))
     assert_parity(helmsman_cli, "h_mutation", root, base=base)
+
+
+@needs_pytest
+def test_rust_check_restores_the_mutant_when_stopped(helmsman_cli, fixture_repo):
+    """SIGTERM, or a console break on Windows, mid-mutant leaves the source as committed."""
+    mod_path = fixture_repo / "pkg" / "mod.py"
+    mod_path.write_text(GUARD)
+    (fixture_repo / "pkg" / "test_mod.py").write_text(
+        "import time\n\nfrom pkg.mod import check_guard\n\n\n"
+        "def test_guard():\n    if check_guard(5):\n        time.sleep(30)\n"
+        "    assert check_guard(50)\n"
+    )
+    commit_all(fixture_repo)
+    original = mod_path.read_bytes()
+    proc = subprocess.Popen(
+        [str(helmsman_cli), "check", "h_mutation", str(fixture_repo), "origin/main"],
+        stdout=subprocess.PIPE,
+        text=True,
+        **NEW_GROUP,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while mod_path.read_bytes() == original:
+            assert proc.poll() is None and time.monotonic() < deadline, "no mutant seen"
+            time.sleep(0.05)
+        stop(proc)
+        out, _ = proc.communicate(timeout=20)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert mod_path.read_bytes() == original
+    assert "stopped early" in out
