@@ -69,7 +69,7 @@ pub fn run(args: &[&str], cwd: &str, timeout: Duration) -> Result<Output, RunErr
     let status = loop {
         match child.try_wait().map_err(RunError::Spawn)? {
             Some(status) => break status,
-            None if Instant::now() >= deadline => {
+            None if Instant::now() >= deadline || group::stopping() => {
                 kill_tree(&mut child);
                 return Err(RunError::Timeout);
             }
@@ -107,7 +107,7 @@ extern "system" {
 }
 
 mod group {
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::sync::Once;
 
     static GROUPS: [AtomicI32; 64] = [const { AtomicI32::new(0) }; 64];
@@ -148,8 +148,16 @@ mod group {
         }
     }
 
+    static STOPPING: AtomicBool = AtomicBool::new(false);
+
+    /// A tool spawned while a stop was killing the others never registered in time, so `run` ends it.
+    pub fn stopping() -> bool {
+        STOPPING.load(Ordering::SeqCst)
+    }
+
     /// Async-signal-safe on Unix: only atomics and kill(2).
     pub fn kill_all() {
+        STOPPING.store(true, Ordering::SeqCst);
         for g in &GROUPS {
             let pgid = g.load(Ordering::SeqCst);
             if pgid > 0 {

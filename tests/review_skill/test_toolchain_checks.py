@@ -6,7 +6,17 @@ import time
 
 import pytest
 
-from .conftest import _git, commit_all, gone_within, posix_only, skip_shims_on_windows
+from .conftest import (
+    NEW_GROUP,
+    SCRIPTS,
+    STOP_SIGNAL,
+    _git,
+    commit_all,
+    gone_within,
+    posix_only,
+    skip_shims_on_windows,
+    stop,
+)
 from .test_phase0 import load
 
 
@@ -857,4 +867,34 @@ def test_run_cmd_timeout_kills_the_tools_whole_process_tree(tmp_path):
         -1,
         "TIMEOUT",
     )
+    assert gone_within(int(pid_file.read_text()), seconds=5)
+
+
+def test_stop_reaches_a_check_whose_tool_never_heard_it(tmp_path):
+    """A tool that misses the stop (spawned as it landed) must not hold the check until the tool ends."""
+    shutil.copy(SCRIPTS / "checks" / "_diff.py", tmp_path / "_diff.py")
+    pid_file = tmp_path / "tool.pid"
+    deaf = (
+        "import os, pathlib, signal, time\n"
+        f"signal.signal({int(STOP_SIGNAL)}, signal.SIG_IGN)\n"
+        f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    (tmp_path / "check.py").write_text(
+        "import sys\nimport _diff\n\n"
+        f"_diff.run_cmd([sys.executable, '-c', {deaf!r}], '.', 120)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(tmp_path / "check.py")], cwd=tmp_path, **NEW_GROUP
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() or not pid_file.read_text():
+            assert proc.poll() is None and time.monotonic() < deadline, "tool never ran"
+            time.sleep(0.05)
+        stop(proc)
+        assert proc.wait(timeout=15) == 128 + STOP_SIGNAL
+    finally:
+        if proc.poll() is None:
+            proc.kill()
     assert gone_within(int(pid_file.read_text()), seconds=5)

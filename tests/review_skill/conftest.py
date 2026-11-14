@@ -137,7 +137,7 @@ def helmsman_cli() -> Path:
     r = subprocess.run(
         ["cargo", "build", "--release", "--manifest-path", str(CLI_MANIFEST)],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     assert r.returncode == 0, r.stderr[-2000:]
     exe = "helmsman.exe" if os.name == "nt" else "helmsman"
@@ -145,7 +145,7 @@ def helmsman_cli() -> Path:
 
 
 def ported_checks(cli: Path) -> list[str]:
-    r = subprocess.run([str(cli), "checks"], capture_output=True, text=True)
+    r = subprocess.run([str(cli), "checks"], capture_output=True, encoding="utf-8")
     assert r.returncode == 0, r.stderr
     return r.stdout.split()
 
@@ -162,9 +162,11 @@ def assert_parity(cli: Path, name: str, repo: Path, base: str = "origin/main"):
             base,
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     rs = subprocess.run(
-        [str(cli), "check", name, str(repo), base], capture_output=True, text=True
+        [str(cli), "check", name, str(repo), base],
+        capture_output=True,
+        encoding="utf-8",
     )
     assert (rs.stdout, rs.returncode) == (py.stdout, py.returncode)

@@ -99,7 +99,7 @@ def test_cli_runs_end_to_end(fixture_repo, tmp_path):
     r = subprocess.run(
         [sys.executable, str(SCRIPTS / "phase0.py"), str(fixture_repo), str(out)],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=600,
     )
     assert r.returncode == 0
@@ -171,7 +171,7 @@ def test_phase0_guard_streams_and_stops_child_when_signalled(tmp_path):
         [sys.executable, str(guard), str(tmp_path), str(out)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
         **NEW_GROUP,
     )
     try:
@@ -321,7 +321,7 @@ def test_no_check_answers_a_broken_base_with_a_traceback(tmp_path):
         r = subprocess.run(
             [sys.executable, str(check), str(tmp_path), "not-a-ref"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=120,
         )
         assert r.returncode == 0, (check.name, r.stderr[-200:])

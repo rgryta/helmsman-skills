@@ -6,9 +6,12 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 CHECK_BUDGET_S = int(os.environ.get("HELMSMAN_PHASE0_CHECK_S", "240")) - 20
+# a blocked wait defers Windows signal handlers, so a tool that missed the stop would hold it
+WAIT_SLICE_S = 0.2
 
 
 def _exit_on_signal(signum, _frame):
@@ -51,8 +54,18 @@ def run_cmd(args, cwd, timeout):
         )
     except OSError as e:
         return -3, f"ERROR {e}"
+    deadline = time.monotonic() + timeout
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        while True:
+            left = deadline - time.monotonic()
+            try:
+                stdout, stderr = proc.communicate(
+                    timeout=max(0, min(WAIT_SLICE_S, left))
+                )
+                break
+            except subprocess.TimeoutExpired:
+                if left <= WAIT_SLICE_S:
+                    raise
     except subprocess.TimeoutExpired:
         # a runner's own children (uv's pytest, a parallel harness's workers) outlive a plain kill
         _kill_group(proc)

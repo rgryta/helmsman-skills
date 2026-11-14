@@ -299,7 +299,7 @@ def _patch_ids(worktree, base, tip):
         cwd=worktree,
         input=log.stdout,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout
     return {c: p for p, c in (line.split() for line in reversed(ids.splitlines()))}
 

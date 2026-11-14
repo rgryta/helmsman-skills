@@ -227,13 +227,13 @@ def test_rust_port_matches_python_on_own_history(helmsman_cli):
         ["git", "rev-parse", "HEAD"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     base = subprocess.run(
         ["git", "rev-list", "--max-count=1", "--skip=8", head],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     if not base:
         pytest.skip("shallow clone without enough history")

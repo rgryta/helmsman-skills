@@ -24,7 +24,7 @@ def env(tmp_path, monkeypatch):
     (seed / "a.py").write_text("x = 2\n")
     commit_all(seed, "change")
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=seed, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"], cwd=seed, capture_output=True, encoding="utf-8"
     ).stdout.strip()
     _git(seed, "checkout", "-q", "main")
     origin = tmp_path / "origin.git"
@@ -90,7 +90,7 @@ def setup(env, *extra, pid=None, tag="a", shell=None):
         cmd,
         cwd=env["checkout"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=60,
     )
     return r.returncode, json.loads(r.stdout)
@@ -122,7 +122,7 @@ def test_prints_one_json_object_with_every_path(env):
         ["git", "rev-parse", "HEAD"],
         cwd=out["worktree"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     assert head == env["head"]
     rounds = json.loads((env["base"] / f"o__r__pr{PR}.json").read_text())["rounds"]
@@ -183,7 +183,10 @@ def _push_feat_commit(env):
     commit_all(env["seed"], "more")
     _git(env["seed"], "push", "-q", str(env["origin"]), "feat")
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=env["seed"], capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=env["seed"],
+        capture_output=True,
+        encoding="utf-8",
     ).stdout.strip()
     _git(env["origin"], "update-ref", f"refs/pull/{PR}/head", head)
     view = json.loads(env["view"].read_text())
@@ -232,7 +235,7 @@ def _release(worktree, tag):
             tag,
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=30,
     )
     return json.loads(r.stdout)
@@ -271,14 +274,14 @@ def test_fold_mode_checks_out_the_branch(env):
         ["git", "branch", "--show-current"],
         cwd=out["worktree"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     assert branch == "feat"
 
 
 def _rev(repo, ref="HEAD"):
     return subprocess.run(
-        ["git", "rev-parse", ref], cwd=repo, capture_output=True, text=True
+        ["git", "rev-parse", ref], cwd=repo, capture_output=True, encoding="utf-8"
     ).stdout.strip()
 
 

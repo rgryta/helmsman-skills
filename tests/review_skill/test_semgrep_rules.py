@@ -38,7 +38,7 @@ def test_seed_rules_fire_on_bait(tmp_path):
     r = subprocess.run(
         [*_semgrep_cmd(), "--config", str(RULES), "--json", str(bait)],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=300,
     )
     assert r.stdout.count('"check_id"') >= 4
@@ -96,7 +96,7 @@ def test_broad_except_rule_ignores_reraise_but_still_catches_swallow(tmp_path):
             str(bait),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=300,
     )
     assert r.stdout.count('"check_id"') == 3
@@ -155,7 +155,7 @@ def test_broad_except_rule_ignores_fail_closed_handlers_and_unrelated_names(
             str(bait),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=300,
     )
     assert r.stdout.count('"check_id"') == 2
@@ -452,7 +452,7 @@ def test_absolute_promise_rule_fires_only_on_the_promising_function(tmp_path):
             str(bait),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=180,
     )
     results = json.loads(out.stdout)["results"]
@@ -645,7 +645,7 @@ def _rule_hits(rule, source, tmp_path):
             str(bait),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=180,
     )
     return sorted(r["start"]["line"] for r in json.loads(out.stdout)["results"])
@@ -713,7 +713,7 @@ def test_every_local_rule_file_parses():
     out = subprocess.run(
         [*_semgrep_cmd(), "--config", str(RULES), "--validate", "--json"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=180,
     )
     assert out.returncode == 0, f"a rule file is invalid:\n{out.stderr[:600]}"
@@ -820,7 +820,7 @@ def _rule_lines(rule, tmp_path, source):
             str(bait),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=180,
     )
     return sorted(r["start"]["line"] for r in json.loads(out.stdout)["results"])

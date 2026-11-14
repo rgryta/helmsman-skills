@@ -170,7 +170,7 @@ def test_bfs_case_really_reports_rows(fixture_repo):
             "origin/main",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout
     assert out.startswith("Bound facts:") and out.count("### ") >= 5
 

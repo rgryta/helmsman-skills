@@ -301,13 +301,13 @@ def test_rust_port_matches_python_on_a_relative_worktree(
             [sys.executable, script, wt, "origin/main"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         )
         rs = subprocess.run(
             [str(helmsman_cli), "check", "c_pytest", wt, "origin/main"],
             cwd=cwd,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         )
         assert (rs.stdout, rs.returncode) == (py.stdout, py.returncode), wt
 
@@ -319,7 +319,7 @@ def test_rust_port_matches_python_on_own_history(helmsman_cli, tmp_path, monkeyp
         ["git", "rev-parse", "--verify", "-q", "HEAD~5"],
         cwd=repo,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     if not base:
         pytest.skip("shallow clone without enough history")

@@ -23,7 +23,11 @@ BLOB_URL = re.compile(r"https?://github\.com/[^/\s]+/[^/\s]+/blob/[^/\s]+/")
 def _tracked(root):
     try:
         r = subprocess.run(
-            ["git", "ls-files"], cwd=root, capture_output=True, text=True, timeout=60
+            ["git", "ls-files"],
+            cwd=root,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=60,
         )
     except OSError:
         return None
