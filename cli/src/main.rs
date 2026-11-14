@@ -1,4 +1,4 @@
-mod checks;
+use helmsman::checks;
 
 use std::process::ExitCode;
 

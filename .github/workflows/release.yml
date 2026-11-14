@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
 jobs:
   version:
     if: github.ref_type == 'tag'
@@ -48,6 +51,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: enable long git paths (windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - name: cargo build
         run: cargo build --release --locked --manifest-path cli/Cargo.toml --target ${{ matrix.target }}
       - name: package

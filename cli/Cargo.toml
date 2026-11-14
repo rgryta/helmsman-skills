@@ -6,6 +6,12 @@ license = "MIT"
 publish = false
 
 [dependencies]
+ruff_python_ast = { git = "https://github.com/astral-sh/ruff", tag = "0.17.3" }
+ruff_python_parser = { git = "https://github.com/astral-sh/ruff", tag = "0.17.3" }
+ruff_text_size = { git = "https://github.com/astral-sh/ruff", tag = "0.17.3" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
 
 [profile.release]
 lto = true
