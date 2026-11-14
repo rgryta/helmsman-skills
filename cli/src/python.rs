@@ -1,5 +1,5 @@
 //! Python semantics the checks lean on: `str` whitespace and line splitting, number parsing,
-//! `Path.read_text(errors="ignore")`, and which lines `tokenize` reports comments on.
+//! `Path.read_text`, and which lines `tokenize` reports comments on.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -79,7 +79,18 @@ pub fn parse_int(s: &str) -> Option<i64> {
 pub fn read_text(path: &Path) -> std::io::Result<String> {
     let bytes = std::fs::read(path)?;
     let text: String = bytes.utf8_chunks().map(|chunk| chunk.valid()).collect();
-    Ok(text.replace("\r\n", "\n").replace('\r', "\n"))
+    Ok(universal_newlines(&text))
+}
+
+/// `Path.read_text(errors="replace")`: each undecodable sequence becomes U+FFFD, universal newlines.
+pub fn read_text_replace(path: &Path) -> std::io::Result<String> {
+    Ok(universal_newlines(&String::from_utf8_lossy(
+        &std::fs::read(path)?,
+    )))
+}
+
+fn universal_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// CPython's tokenizer `MAXLEVEL`: one more open bracket is "too many nested parentheses".

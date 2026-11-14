@@ -175,6 +175,7 @@ pub fn os_error(e: &io::Error, program: &str, cwd: &str) -> String {
         io::ErrorKind::NotFound => "FileNotFoundError",
         io::ErrorKind::PermissionDenied => "PermissionError",
         io::ErrorKind::NotADirectory => "NotADirectoryError",
+        io::ErrorKind::IsADirectory => "IsADirectoryError",
         _ => "OSError",
     };
     let text = e.to_string();
