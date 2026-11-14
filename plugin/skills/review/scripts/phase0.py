@@ -103,7 +103,7 @@ def _merge_base(worktree, ref):
             ["git", "merge-base", ref, "HEAD"],
             cwd=worktree,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=60,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -131,7 +131,7 @@ def _dirty(worktree):
         r = subprocess.run(
             ["git", "-C", worktree, "status", "--porcelain", "-z"],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=60,
         )
     except (subprocess.TimeoutExpired, OSError):
@@ -186,7 +186,7 @@ def _repair_worktree(worktree, preexisting):
                 *dirty,
             ],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
             timeout=60,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
@@ -214,7 +214,7 @@ def _fetch_cli():
         r = subprocess.run(
             [sys.executable, str(FETCH)],
             stdout=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
             timeout=FETCH_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
@@ -230,7 +230,7 @@ def _cli_routes():
         return {}
     try:
         r = subprocess.run(
-            [str(cli), "checks"], capture_output=True, text=True, timeout=30
+            [str(cli), "checks"], capture_output=True, encoding="utf-8", timeout=30
         )
     except (OSError, subprocess.SubprocessError) as e:
         reason = f"{type(e).__name__}: {e}"
@@ -258,7 +258,7 @@ def _run_subprocess_check(name, worktree, base, cli=None):
             [*argv, worktree, base],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
         _live_checks.add(proc)

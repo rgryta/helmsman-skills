@@ -162,7 +162,7 @@ def test_rust_port_matches_python_on_git_failure(helmsman_cli, fixture_repo):
 def _stopped_run(argv, repo, sig):
     target = repo / "pkg" / "mod.py"
     original = target.read_bytes()
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, encoding="utf-8")
     deadline = time.monotonic() + 20
     while target.read_bytes() == original:
         assert proc.poll() is None and time.monotonic() < deadline, "no mutant seen"
@@ -197,7 +197,7 @@ def test_rust_port_matches_python_on_own_history(helmsman_cli, tmp_path, monkeyp
         ["git", "rev-parse", "--verify", "-q", "HEAD~1"],
         cwd=root,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     ).stdout.strip()
     if not base:
         pytest.skip("shallow clone without enough history")
@@ -221,7 +221,7 @@ def test_rust_check_restores_the_mutant_when_stopped(helmsman_cli, fixture_repo)
     proc = subprocess.Popen(
         [str(helmsman_cli), "check", "h_mutation", str(fixture_repo), "origin/main"],
         stdout=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
         **NEW_GROUP,
     )
     try:

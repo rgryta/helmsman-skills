@@ -94,7 +94,7 @@ def test_real_binary_rejects_unported_check(helmsman_cli, fixture_repo):
     r = subprocess.run(
         [str(helmsman_cli), "check", "no_such_check", str(fixture_repo), "main"],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     assert r.returncode == 2
     assert "not ported" in r.stderr

@@ -215,14 +215,14 @@ def test_rust_port_matches_python_on_this_repos_history(helmsman_cli):
         ["git", "log", "-1", "--format=%H", "--", "*.py"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     head = r.stdout.strip()
     parent = subprocess.run(
         ["git", "rev-parse", "--verify", "-q", f"{head}^"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
     )
     if r.returncode != 0 or not head or parent.returncode != 0:
         pytest.skip("no two commits of Python history in this checkout")

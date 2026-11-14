@@ -81,7 +81,7 @@ def commit_two(repo, first, second, path="pkg/svc.py"):
         capture_output=True,
     )
     base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, encoding="utf-8"
     ).stdout.strip()
     target.write_text(second)
     commit_all(repo, "change")
@@ -221,7 +221,7 @@ def test_no_python_changes_is_reported_ok(repo):
     (repo / "README.md").write_text("before\n")
     commit_all(repo, "base")
     base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, encoding="utf-8"
     ).stdout.strip()
     (repo / "README.md").write_text("after\n")
     commit_all(repo, "docs only")

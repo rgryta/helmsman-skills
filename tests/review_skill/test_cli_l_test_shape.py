@@ -178,7 +178,7 @@ def test_rust_port_matches_python_on_own_history(helmsman_cli):
         ["git", "rev-list", "--max-parents=0", "HEAD"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         check=True,
     ).stdout.split()[0]
     assert_parity(helmsman_cli, "l_test_shape", REPO_ROOT, base=first)
