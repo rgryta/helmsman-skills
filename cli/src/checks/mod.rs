@@ -7,6 +7,7 @@ mod c_pytest;
 mod d_comment_density;
 mod e_dead_code;
 mod f_import_closure;
+mod g_semgrep;
 mod i_neighborhood;
 mod j_siblings;
 mod k_claims;
@@ -20,6 +21,7 @@ pub const REGISTRY: &[(&str, Check)] = &[
     ("d_comment_density", d_comment_density::run),
     ("e_dead_code", e_dead_code::run),
     ("f_import_closure", f_import_closure::run),
+    ("g_semgrep", g_semgrep::run),
     ("i_neighborhood", i_neighborhood::run),
     ("j_siblings", j_siblings::run),
     ("k_claims", k_claims::run),
