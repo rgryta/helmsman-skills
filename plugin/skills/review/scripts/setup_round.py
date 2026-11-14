@@ -34,7 +34,7 @@ class SetupError(Exception):
 
 
 def _run(args, cwd=None, check=True):
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    r = subprocess.run(args, cwd=cwd, capture_output=True, encoding="utf-8")
     if check and r.returncode != 0:
         raise SetupError(
             f"{' '.join(args)} failed ({r.returncode}): {r.stderr.strip()[-400:]}"
@@ -78,7 +78,7 @@ def _lease_path(worktree):
 def _read_lease(path):
     """The lease, None when there is none, {} when the file is empty or corrupt (a crashed writer: stale)."""
     try:
-        lease = json.loads(path.read_text())
+        lease = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError):
@@ -105,7 +105,9 @@ def take_lease(worktree, pid, tag):
     if current is not None:
         path.unlink(missing_ok=True)
     tmp = path.with_name(f"{LEASE_NAME}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({"pid": pid, "tag": tag, "ts": time.time()}))
+    tmp.write_text(
+        json.dumps({"pid": pid, "tag": tag, "ts": time.time()}), encoding="utf-8"
+    )
     try:
         os.link(tmp, path)  # atomic and exclusive: never seen half-written
     except FileExistsError:
@@ -449,7 +451,7 @@ def _leased_round(args, checkout, view, worktree, head):
     outdir.mkdir(parents=True, exist_ok=True)
     pruned = prune_runs(pr_dir, prefix, KEEP_RUNS)
     pr_json = outdir / "pr.json"
-    pr_json.write_text(json.dumps(view, indent=1))
+    pr_json.write_text(json.dumps(view, indent=1), encoding="utf-8")
     out = {
         "ok": True,
         "repo": args.repo,

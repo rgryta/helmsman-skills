@@ -1,5 +1,4 @@
 import argparse
-import fcntl
 import hashlib
 import json
 import os
@@ -7,6 +6,11 @@ import re
 import sys
 import time
 from pathlib import Path
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -35,7 +39,7 @@ def _path(args):
 def _load(p, a):
     if p.exists():
         try:
-            return json.loads(p.read_text())
+            return json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
             aside = p.with_name(f"{p.name}.corrupt-{int(time.time())}")
             os.replace(p, aside)
@@ -48,7 +52,7 @@ def _load(p, a):
 
 def _write_atomic(p, data):
     tmp = p.with_name(p.name + f".tmp.{os.getpid()}")
-    tmp.write_text(json.dumps(data, indent=1))
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     os.replace(tmp, p)
 
 
@@ -62,7 +66,7 @@ def _lists_checked(lines):
 
 def _classify(path):
     try:
-        text = Path(path).read_text()
+        text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return "MALFORMED"
     verdict, detail = _verdict.classify(text)
@@ -111,7 +115,7 @@ def _set_status(data, entry):
 
 def _read_batch(path, fields, required):
     try:
-        entries = json.loads(Path(path).read_text())
+        entries = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         return None, f"--from-json {path}: {type(e).__name__}: {e}"
     if not isinstance(entries, list):
@@ -189,7 +193,15 @@ def main(argv=None):
             print(err, file=sys.stderr)
             return 1
     lock = open(str(_path(a)) + ".lock", "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    if os.name == "nt":
+        while True:
+            try:
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except PermissionError:
+                time.sleep(0.05)
+    else:
+        fcntl.flock(lock, fcntl.LOCK_EX)
     try:
         p = _path(a)
         data = _load(p, a)
@@ -268,9 +280,14 @@ def main(argv=None):
         _write_atomic(p, data)
         return 0
     finally:
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        if os.name == "nt":
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
 
 
 if __name__ == "__main__":
+    # titles carry emoji that a cp1252 Windows pipe cannot encode
+    sys.stdout.reconfigure(encoding="utf-8")
     raise SystemExit(main())

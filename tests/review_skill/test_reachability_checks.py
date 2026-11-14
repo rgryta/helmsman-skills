@@ -2,7 +2,7 @@ import shutil
 
 import pytest
 
-from .conftest import _git, commit_all
+from .conftest import _git, commit_all, posix_only
 from .test_phase0 import load
 
 
@@ -146,6 +146,7 @@ def test_dead_code_line_parser_accepts_paths_with_spaces():
     assert m and m.group("path") == "my dir/mod.py" and m.group("line") == "4"
 
 
+@posix_only
 def test_dead_code_broken_tool_output_skips_not_findings(
     fixture_repo, tmp_path, monkeypatch
 ):
@@ -211,6 +212,7 @@ def test_import_closure_treats_a_sibling_module_as_local(fixture_repo):
     assert out.startswith("OK:") and "helper" not in out
 
 
+@posix_only
 def test_import_closure_maps_imports_with_the_reviewed_repos_env(fixture_repo):
     """A dependency installed only in the repo's own venv resolves, instead of reading as unverified."""
     (fixture_repo / "pkg" / "pyproject.toml").write_text(
@@ -232,6 +234,7 @@ def test_import_closure_maps_imports_with_the_reviewed_repos_env(fixture_repo):
     assert "the reviewed repo's env" in out
 
 
+@posix_only
 def test_import_closure_ignores_an_unsynced_repo_env(fixture_repo, monkeypatch):
     """A repo venv whose sync is not verified is not trusted for import mapping."""
     (fixture_repo / "pkg" / "mod.py").write_text(

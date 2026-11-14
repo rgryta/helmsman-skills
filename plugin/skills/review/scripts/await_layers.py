@@ -12,7 +12,7 @@ DEADLINE_S = 540
 
 def _terminator(path):
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError as e:
         return None, f"unreadable ({type(e).__name__})"
     verdict, detail = _verdict.classify(text)

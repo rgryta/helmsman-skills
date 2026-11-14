@@ -1,15 +1,67 @@
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
+
+if os.name == "nt":
+    import _winapi
 
 SCRIPTS = (
     Path(__file__).resolve().parents[2] / "plugin" / "skills" / "review" / "scripts"
 )
 CLI_MANIFEST = Path(__file__).resolve().parents[2] / "cli" / "Cargo.toml"
+STOP_SIGNAL = signal.SIGBREAK if os.name == "nt" else signal.SIGTERM
+NEW_GROUP = (
+    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {}
+)
+posix_only = pytest.mark.skipif(
+    os.name == "nt", reason="exercises POSIX signals or shell shims"
+)
+
+
+def skip_shims_on_windows():
+    if os.name == "nt":
+        pytest.skip("#!/bin/sh shims cannot be executed on Windows")
+
+
+def stop(proc):
+    """What Phase 0 sends a process it stops: SIGTERM, or a console break to a NEW_GROUP child."""
+    if os.name == "nt":
+        os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+    else:
+        proc.send_signal(signal.SIGTERM)
+
+
+def alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+    try:
+        handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid)
+    except OSError:
+        return False
+    try:
+        return _winapi.WaitForSingleObject(handle, 0) != _winapi.WAIT_OBJECT_0
+    finally:
+        _winapi.CloseHandle(handle)
+
+
+def gone_within(pid, seconds):
+    """A killed orphan stays a zombie until init reaps it."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not alive(pid):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 @pytest.fixture(autouse=True)
@@ -101,7 +153,14 @@ def ported_checks(cli: Path) -> list[str]:
 def assert_parity(cli: Path, name: str, repo: Path, base: str = "origin/main"):
     """The binary's `check` prints exactly what the Python check prints, with its exit code."""
     py = subprocess.run(
-        [sys.executable, str(SCRIPTS / "checks" / f"{name}.py"), str(repo), base],
+        [
+            sys.executable,
+            "-X",
+            "utf8",
+            str(SCRIPTS / "checks" / f"{name}.py"),
+            str(repo),
+            base,
+        ],
         capture_output=True,
         text=True,
     )

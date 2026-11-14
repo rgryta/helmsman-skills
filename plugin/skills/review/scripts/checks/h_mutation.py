@@ -26,6 +26,7 @@ MAX_MUTANTS = 10
 BUDGET_S = _diff.CHECK_BUDGET_S
 PER_MUTANT_S = 120
 MIN_RUN_S = 20
+STOP_SIGNALS = (_diff.STOP_SIGNAL, signal.SIGINT)
 
 
 class _Terminated(Exception):
@@ -33,25 +34,39 @@ class _Terminated(Exception):
 
 
 def _raise_terminated(signum, frame):
-    signal.signal(
-        signal.SIGTERM, signal.SIG_IGN
-    )  # a repeat stop must not interrupt the restore
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    for s in STOP_SIGNALS:
+        signal.signal(s, signal.SIG_IGN)  # a repeat stop must not interrupt the restore
     raise _Terminated(f"signal {signum} received, restored and exiting")
 
 
 def _restore(path, data):
-    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+    if not hasattr(signal, "pthread_sigmask"):
+        _restore_deferring_stops(path, data)
+        return
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, set(STOP_SIGNALS))
     try:
         path.write_bytes(data)
     finally:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
+def _restore_deferring_stops(path, data):
+    """Windows has no signal mask, so a stop landing mid-write is held and replayed after it."""
+    held = []
+    previous = {s: signal.signal(s, lambda n, _f: held.append(n)) for s in STOP_SIGNALS}
+    try:
+        path.write_bytes(data)
+    finally:
+        for s, handler in previous.items():
+            signal.signal(s, handler)
+    if held and callable(previous[held[0]]):
+        previous[held[0]](held[0], None)
+
+
 def _install_signal_handlers():
     try:
-        signal.signal(signal.SIGTERM, _raise_terminated)
-        signal.signal(signal.SIGINT, _raise_terminated)
+        for s in STOP_SIGNALS:
+            signal.signal(s, _raise_terminated)
     except ValueError:
         pass
 

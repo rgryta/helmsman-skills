@@ -34,7 +34,8 @@ fn report(worktree: &str, base: &str, budget: i64) -> Result<String, String> {
     let mut tools: Vec<Vec<String>> = vec![];
     if let Some(python) = &project.python {
         flags.splice(0..0, ["--pythonpath", python.as_str()]);
-        let pinned = Path::new(python).with_file_name("pyright");
+        let pinned =
+            Path::new(python).with_file_name(format!("pyright{}", std::env::consts::EXE_SUFFIX));
         if pinned.exists() {
             tools.push(vec![pinned.to_string_lossy().into_owned()]);
         }

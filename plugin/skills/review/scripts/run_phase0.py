@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import os
 import signal
 import subprocess
@@ -14,7 +15,7 @@ SIGNAL_GRACE_S = 10
 
 def _write_atomic(path, text):
     tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -50,7 +51,19 @@ def _signal_group(pid, signum):
         pass
 
 
+def _stop_phase0(pid):
+    # TerminateProcess skips cleanup; Phase 0 passes a console break on to its checks
+    if os.name == "nt":
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+    else:
+        _signal_group(pid, signal.SIGTERM)
+
+
 def _stop_group(pid, already_signalled=False):
+    # Phase 0 stops its own checks; once it exits, taskkill /T cannot find them
+    if os.name == "nt":
+        return
     if not already_signalled:
         _signal_group(pid, signal.SIGTERM)
     deadline = time.monotonic() + SIGNAL_GRACE_S
@@ -88,27 +101,37 @@ def main(argv):
         if not received_signal:
             received_signal.append(signum)
         if proc_ref:  # checks restore their mutants on SIGTERM only
-            _signal_group(proc_ref[0].pid, signal.SIGTERM)
+            _stop_phase0(proc_ref[0].pid)
 
     handled = [signal.SIGINT, signal.SIGTERM]
-    if hasattr(signal, "SIGHUP"):
-        handled.append(signal.SIGHUP)
+    for optional in ("SIGHUP", "SIGBREAK"):
+        if hasattr(signal, optional):
+            handled.append(getattr(signal, optional))
     previous = {signum: signal.getsignal(signum) for signum in handled}
     for signum in handled:
         signal.signal(signum, _forward_signal)
     try:
         proc = subprocess.Popen(
-            [sys.executable, str(PHASE0), worktree, str(out_file), *base_ref],
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                str(PHASE0),
+                worktree,
+                str(out_file),
+                *base_ref,
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
             errors="replace",
             bufsize=1,
             start_new_session=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
         proc_ref.append(proc)
         if received_signal:
-            _signal_group(proc.pid, signal.SIGTERM)
+            _stop_phase0(proc.pid)
         stdout_tail = deque(maxlen=3)
         stderr_tail = deque(maxlen=3)
         stdout_thread = threading.Thread(
@@ -119,7 +142,8 @@ def main(argv):
         )
         stdout_thread.start()
         stderr_thread.start()
-        returncode = proc.wait()
+        while (returncode := proc.poll()) is None:
+            time.sleep(0.1)  # Windows defers signal handlers through a blocking wait
         if received_signal or returncode != 0:
             _stop_group(proc.pid, already_signalled=bool(received_signal))
         stdout_thread.join()

@@ -235,8 +235,14 @@ fn siblings(path: &Path) -> HashSet<String> {
 }
 
 fn probe_interpreter(worktree: &str) -> Result<Interpreter, String> {
-    let python = env::which("python3")
-        .or_else(|| env::which("python"))
+    // Windows' python3 is usually the Store stub, while a venv names its interpreter only python
+    let names = if cfg!(windows) {
+        ["python", "python3"]
+    } else {
+        ["python3", "python"]
+    };
+    let python = env::which(names[0])
+        .or_else(|| env::which(names[1]))
         .ok_or("FileNotFoundError: no python3 on PATH to read the standard library names from")?
         .to_string_lossy()
         .into_owned();

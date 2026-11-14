@@ -1,15 +1,29 @@
-import fcntl
 import importlib.util
 import os
 import signal
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
-from .conftest import SCRIPTS, commit_all
+from .conftest import (
+    NEW_GROUP,
+    SCRIPTS,
+    STOP_SIGNAL,
+    commit_all,
+    gone_within,
+    posix_only,
+    stop,
+)
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 needs_pytest = pytest.mark.skipif(
     not (shutil.which("pytest") or shutil.which("uv")), reason="no pytest on PATH"
@@ -104,6 +118,7 @@ def test_phase0_guard_preserves_successful_facts(tmp_path, monkeypatch):
     assert out.read_text() == "# facts\n"
 
 
+@posix_only
 def test_phase0_guard_records_child_signal_without_facts(tmp_path, monkeypatch):
     guard = load("run_phase0_signal", "run_phase0.py")
     child = tmp_path / "terminated.py"
@@ -125,6 +140,7 @@ def test_phase0_guard_records_child_signal_without_facts(tmp_path, monkeypatch):
     assert "progress three" in text
 
 
+@posix_only
 def test_phase0_guard_normalizes_signal_after_facts(tmp_path, monkeypatch):
     guard = load("run_phase0_signal_after_facts", "run_phase0.py")
     child = tmp_path / "terminated_after_facts.py"
@@ -156,23 +172,20 @@ def test_phase0_guard_streams_and_stops_child_when_signalled(tmp_path):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        **NEW_GROUP,
     )
     try:
         assert proc.stdout is not None
         assert proc.stdout.readline() == "phase0 progress\n"
         pid = int(child_pid.read_text())
-        proc.send_signal(signal.SIGTERM)
+        stop(proc)
         stdout, stderr = proc.communicate(timeout=10)
-        assert proc.returncode == 128 + signal.SIGTERM
+        assert proc.returncode == 128 + STOP_SIGNAL
         assert stdout == ""
-        assert "guard received signal 15 (SIGTERM)" in stderr
+        name = signal.Signals(STOP_SIGNAL).name
+        assert f"guard received signal {int(STOP_SIGNAL)} ({name})" in stderr
         assert "phase0 progress" in out.read_text()
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            pass
-        else:
-            raise AssertionError("Phase 0 child survived guard termination")
+        assert gone_within(pid, 5), "Phase 0 child survived guard termination"
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -188,8 +201,9 @@ def test_run_subprocess_check_uses_graceful_sigterm_output(tmp_path, monkeypatch
         "def _h(signum, frame):\n"
         "    print('SKIPPED: graceful shutdown')\n"
         "    sys.exit(0)\n\n\n"
-        "signal.signal(signal.SIGTERM, _h)\n"
-        "time.sleep(30)\n"
+        f"signal.signal({int(STOP_SIGNAL)}, _h)\n"
+        "for _ in range(300):\n"
+        "    time.sleep(0.1)\n"
     )
     monkeypatch.setattr(phase0, "HERE", tmp_path)
     monkeypatch.setattr(phase0, "PER_CHECK_S", 1)
@@ -208,7 +222,7 @@ def test_run_subprocess_check_grace_period_then_sigkills_unresponsive(
     checks_dir = tmp_path / "checks"
     checks_dir.mkdir()
     (checks_dir / "stubborn.py").write_text(
-        "import signal, time\n\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(30)\n"
+        f"import signal, time\n\nsignal.signal({int(STOP_SIGNAL)}, signal.SIG_IGN)\ntime.sleep(30)\n"
     )
     monkeypatch.setattr(phase0, "HERE", tmp_path)
     monkeypatch.setattr(phase0, "PER_CHECK_S", 1)
@@ -475,16 +489,9 @@ def test_timed_out_check_takes_its_tool_process_group_down(tmp_path, monkeypatch
     assert phase0._run_subprocess_check("hangs", str(tmp_path), "HEAD") == (
         "SKIPPED: check timed out"
     )
-    pid = int(tool_pid.read_text())
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return
-        time.sleep(0.05)
-    os.kill(pid, signal.SIGKILL)
-    raise AssertionError("tool outlived its timed-out check")
+    assert gone_within(int(tool_pid.read_text()), 5), (
+        "tool outlived its timed-out check"
+    )
 
 
 def test_skip_env_disables_named_checks_without_running_them(
@@ -529,7 +536,7 @@ def test_held_lock_skips_heavy_checks_and_never_delays_fast_ones(
         ],
     )
     with open(lock, "a") as held:
-        fcntl.flock(held, fcntl.LOCK_EX)
+        _lock(held)
         assert phase0.main([str(fixture_repo), str(out)]) == 0
     text = out.read_text()
     assert text.split("## c_pytest\n")[1].startswith(
@@ -613,9 +620,11 @@ def _mutation_only_guard(fixture_repo, tmp_path):
     commit_all(fixture_repo)
     mod_path = fixture_repo / "pkg" / "mod.py"
     original = mod_path.read_bytes()
+    # a Windows venv python.exe is a launcher whose job takes the whole tree down when it is killed
+    python = sys._base_executable if os.name == "nt" else sys.executable
     proc = subprocess.Popen(
         [
-            sys.executable,
+            python,
             str(SCRIPTS / "run_phase0.py"),
             str(fixture_repo),
             str(tmp_path / "FACTS.md"),
@@ -623,6 +632,7 @@ def _mutation_only_guard(fixture_repo, tmp_path):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env={**os.environ, "HELMSMAN_PHASE0_SKIP": skip},
+        **NEW_GROUP,
     )
     deadline = time.monotonic() + 60
     while mod_path.read_bytes() == original:
@@ -642,6 +652,7 @@ def _restored_within(mod_path, original, seconds):
     return False
 
 
+@posix_only
 @needs_pytest
 def test_sighup_to_the_guard_restores_the_mutant(fixture_repo, tmp_path):
     """A hung-up session must not leave a flipped comparison in the source."""
@@ -664,6 +675,7 @@ def test_killed_guard_takes_phase0_down_and_restores_the_mutant(fixture_repo, tm
     assert _restored_within(mod_path, original, 15)
 
 
+@posix_only
 def test_stop_group_does_not_resend_a_forwarded_sigterm(monkeypatch):
     """After the guard forwarded a stop, cleanup only waits and kills; a second SIGTERM would interrupt the restore."""
     guard = load("run_phase0_stop_group", "run_phase0.py")
@@ -678,3 +690,86 @@ def test_stop_group_does_not_resend_a_forwarded_sigterm(monkeypatch):
     assert sent == []
     guard._stop_group(12345, already_signalled=False)
     assert sent == [signal.SIGTERM]
+
+
+def _lock(handle):
+    if os.name == "nt":
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(handle):
+    if os.name == "nt":
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _as_windows(monkeypatch, mod):
+    """On POSIX, drive the module's Windows branch with an msvcrt stand-in built on flock."""
+    if os.name == "nt":
+        return
+
+    def locking(fd, mode, nbytes):
+        assert os.lseek(fd, 0, os.SEEK_CUR) == 0 and nbytes == 1
+        if mode == 0:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise PermissionError(13, "Permission denied") from None
+
+    fake = SimpleNamespace(locking=locking, LK_UNLCK=0, LK_NBLCK=2)
+    monkeypatch.setattr(mod, "msvcrt", fake, raising=False)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(**{**vars(os), "name": "nt"}))
+
+
+def test_windows_heavy_lock_locks_byte_zero_and_skips_while_held(tmp_path, monkeypatch):
+    """The append-mode lock file opens at EOF, so a Windows run must seek to byte 0 before locking."""
+    phase0 = load("phase0_nt", "phase0.py")
+    lock = tmp_path / "phase0.lock"
+    lock.write_text("left by an earlier run\n")
+    _as_windows(monkeypatch, phase0)
+    monkeypatch.setattr(phase0, "LOCK_PATH", lock)
+    monkeypatch.setattr(phase0, "LOCK_WAIT_S", 0)
+    with open(lock, "a") as held:
+        _lock(held)
+        with phase0._heavy_lock() as got:
+            assert got is False
+    with phase0._heavy_lock() as got:
+        assert got is True
+
+
+def test_windows_ledger_waits_for_a_held_lock_then_releases_it(tmp_path, monkeypatch):
+    """msvcrt has no blocking lock without a 10 s give-up, so the ledger polls until the holder lets go."""
+    ledger = load("ledger_nt", "ledger.py")
+    _as_windows(monkeypatch, ledger)
+    args = ["round-start", "--sha", "aaa", "--repo", "o/r", "--pr", "7"]
+    assert ledger.main([*args, "--dir", str(tmp_path)]) == 0
+    lock_file = next(tmp_path.rglob("*.lock"))
+    with open(lock_file, "w") as held:
+        _lock(held)
+        threading.Timer(0.3, _unlock, (held,)).start()
+        started = time.monotonic()
+        assert ledger.main([*args, "--dir", str(tmp_path)]) == 0
+        assert time.monotonic() - started >= 0.25
+    with open(lock_file, "w") as probe:
+        _lock(probe)
+        _unlock(probe)
+
+
+@needs_pytest
+def test_stop_to_the_guard_restores_the_mutant(fixture_repo, tmp_path):
+    """SIGTERM, or a console break on Windows, reaches h_mutation through the guard and Phase 0."""
+    proc, mod_path, original = _mutation_only_guard(fixture_repo, tmp_path)
+    try:
+        stop(proc)
+        assert proc.wait(timeout=30) == 128 + STOP_SIGNAL
+        assert _restored_within(mod_path, original, 5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()

@@ -1,6 +1,5 @@
 import concurrent.futures
 import contextlib
-import fcntl
 import json
 import os
 import signal
@@ -9,6 +8,13 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+if os.name == "nt":
+    import _winapi
+    import ctypes
+    import msvcrt
+else:
+    import fcntl
 
 HERE = Path(__file__).resolve().parent
 SERIAL = {"h_mutation"}
@@ -30,6 +36,9 @@ PARALLEL_BUDGET_S = PER_CHECK_S + 10
 SERIAL_BUDGET_S = PER_CHECK_S + 10
 # callers collect the whole run at 600 s
 LOCK_WAIT_S = max(0, 590 - PARALLEL_BUDGET_S - SERIAL_BUDGET_S)
+_live_lock = threading.Lock()
+_live_checks = set()
+_stopping = False
 
 
 def _name(entry):
@@ -49,9 +58,14 @@ def _heavy_lock():
         deadline = time.monotonic() + LOCK_WAIT_S
         while True:
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if os.name == "nt":
+                    # msvcrt locks from the file position, which "a" puts at EOF
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except BlockingIOError:
+            except (BlockingIOError, PermissionError):
                 if time.monotonic() >= deadline:
                     yield False
                     return
@@ -100,7 +114,7 @@ def _merge_base(worktree, ref):
 
 def _write_atomic(path, text):
     tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -235,22 +249,53 @@ def _run_subprocess_check(name, worktree, base, cli=None):
     argv = (
         [cli, "check", name]
         if cli
-        else [sys.executable, str(HERE / "checks" / f"{name}.py")]
+        else [sys.executable, "-X", "utf8", str(HERE / "checks" / f"{name}.py")]
     )
-    proc = subprocess.Popen(
-        [*argv, worktree, base],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    with _live_lock:
+        if _stopping:
+            return "SKIPPED: Phase 0 was stopped"
+        proc = subprocess.Popen(
+            [*argv, worktree, base],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        )
+        _live_checks.add(proc)
+    try:
+        return _collect_check(proc)
+    finally:
+        with _live_lock:
+            _live_checks.discard(proc)
+
+
+def _stop_check(proc):
+    # TerminateProcess skips cleanup; a console break reaches the check's handlers
+    if os.name == "nt":
+        with contextlib.suppress(OSError):
+            os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+    else:
+        proc.terminate()
+
+
+def _kill_check(proc):
+    if os.name == "nt" and proc.poll() is None:
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True
+        )
+    with contextlib.suppress(OSError):
+        proc.kill()
+
+
+def _collect_check(proc):
     try:
         out, err = proc.communicate(timeout=PER_CHECK_S)
     except subprocess.TimeoutExpired:
-        proc.terminate()
+        _stop_check(proc)
         try:
             out, err = proc.communicate(timeout=GRACE_S)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _kill_check(proc)
             proc.communicate()
             return "SKIPPED: check timed out"
         if proc.returncode != 0:
@@ -369,20 +414,55 @@ def main(argv):
     return 0
 
 
+def _stop_live_checks():
+    """Windows checks own their console groups, so a stop that reaches Phase 0 is passed on here."""
+    global _stopping
+    with _live_lock:
+        _stopping = True
+        live = list(_live_checks)
+    for proc in live:
+        _stop_check(proc)
+    deadline = time.monotonic() + GRACE_S
+    for proc in live:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=max(0, deadline - time.monotonic()))
+        _kill_check(proc)
+
+
 def _exit_with_parent(poll_s=1.0):
     """A SIGKILLed guard cannot forward anything, so its orphan stops itself."""
     parent = os.getppid()
 
     def watch():
-        while os.getppid() == parent:
-            time.sleep(poll_s)
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(os.getpid(), signal.SIGTERM)
+        # Windows never reparents, so getppid() cannot reveal the orphan
+        if os.name == "nt":
+            with contextlib.suppress(OSError):
+                handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, parent)
+                _winapi.WaitForSingleObject(handle, _winapi.INFINITE)
+            _stop_live_checks()
+        else:
+            while os.getppid() == parent:
+                time.sleep(poll_s)
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(os.getpid(), signal.SIGTERM)
         os._exit(128 + signal.SIGTERM)
 
     threading.Thread(target=watch, daemon=True).start()
 
 
+def _pass_console_stop_to_checks():
+    """Python signal handlers wait for the blocked main thread; a console handler runs on its own thread."""
+
+    @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
+    def handler(_ctrl_type):
+        _stop_live_checks()
+        return 0  # the default handler then ends Phase 0
+
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(handler, 1)
+    return handler
+
+
 if __name__ == "__main__":
     _exit_with_parent()
+    _console_handler = _pass_console_stop_to_checks() if os.name == "nt" else None
     sys.exit(main(sys.argv[1:]))

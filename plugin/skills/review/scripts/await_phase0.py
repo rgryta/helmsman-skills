@@ -32,7 +32,7 @@ def main(argv):
     poll_s = float(argv[2]) if len(argv) > 2 else POLL_S
     state, waited = await_phase0(facts, deadline_s, poll_s)
     if state == "READY":
-        lines = facts.read_text(errors="replace").splitlines()
+        lines = facts.read_text(encoding="utf-8", errors="replace").splitlines()
         print(f"READY - {lines[0] if lines else 'empty'}")
     elif state == "MISSING":
         print(f"MISSING - {facts.parent} is not a directory")

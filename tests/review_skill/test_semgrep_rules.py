@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from .conftest import SCRIPTS, commit_all
+from .conftest import SCRIPTS, commit_all, posix_only
 from .test_phase0 import load
 
 RULES = SCRIPTS / "semgrep-rules"
@@ -171,6 +171,7 @@ def test_check_module_contract(fixture_repo, monkeypatch):
     assert out.startswith(("OK:", "SKIPPED:"))
 
 
+@posix_only
 def test_semgrep_errors_and_skips_are_not_reported_clean(
     fixture_repo, tmp_path, monkeypatch
 ):
@@ -196,6 +197,7 @@ def test_semgrep_errors_and_skips_are_not_reported_clean(
     assert "scanned 1 file" in out and "skipped 1" in out
 
 
+@posix_only
 def test_community_pack_ids_are_passed_to_semgrep(fixture_repo, tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
