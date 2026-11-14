@@ -238,6 +238,20 @@ pub fn is_test_path(f: &str) -> bool {
     name.starts_with("test_") || name.ends_with("_test.py") || parts.contains(&"tests")
 }
 
+/// `subprocess.run(args, cwd=cwd, timeout=secs)`, or the `TypeName: message` it raises.
+pub fn run_checked(args: &[&str], cwd: &str, secs: u64) -> Result<Output, String> {
+    run(args, cwd, Duration::from_secs(secs)).map_err(|e| match e {
+        RunError::Spawn(e) => os_error(&e, args[0], cwd),
+        RunError::Timeout => {
+            let argv: Vec<String> = args.iter().map(|a| format!("'{a}'")).collect();
+            format!(
+                "TimeoutExpired: Command '[{}]' timed out after {secs} seconds",
+                argv.join(", ")
+            )
+        }
+    })
+}
+
 /// `changed_py_files`, or the `TypeName: message` the Python check prints after `ERROR: `.
 pub fn changed_py_files(worktree: &str, base: &str) -> Result<Vec<String>, String> {
     let args = [
@@ -248,17 +262,7 @@ pub fn changed_py_files(worktree: &str, base: &str) -> Result<Vec<String>, Strin
         base,
         "HEAD",
     ];
-    let o = match run(&args, worktree, Duration::from_secs(60)) {
-        Ok(o) => o,
-        Err(RunError::Spawn(e)) => return Err(os_error(&e, "git", worktree)),
-        Err(RunError::Timeout) => {
-            let argv: Vec<String> = args.iter().map(|a| format!("'{a}'")).collect();
-            return Err(format!(
-                "TimeoutExpired: Command '[{}]' timed out after 60 seconds",
-                argv.join(", ")
-            ));
-        }
-    };
+    let o = run_checked(&args, worktree, 60)?;
     if o.code != 0 {
         let stderr: String = python::strip(&o.stderr).chars().take(200).collect();
         return Err(format!("RuntimeError: git diff failed: {stderr}"));
