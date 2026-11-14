@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::{diff, python};
 
 pub const SYNC_TIMEOUT: Duration = Duration::from_secs(150);
+pub const RUNNER_ENV: &str = "HELMSMAN_PYTEST_RUNNER";
 
 pub struct ProjectEnv {
     pub python: Option<String>,
@@ -94,6 +95,128 @@ pub fn ensure_project_env(worktree: &str, timeout: Duration) -> ProjectEnv {
             note,
         },
     }
+}
+
+/// uv saying it could not start the tool is a missing runner, not a test result.
+pub fn runner_unavailable(code: i32, out: &str) -> bool {
+    matches!(code, -2 | -3) || (code == 2 && out.contains("Failed to spawn"))
+}
+
+#[derive(Clone, PartialEq)]
+pub enum Arg {
+    Str(String),
+    /// A non-string `[project] name`, which Popen rejects with a TypeError.
+    Bad(&'static str),
+}
+
+pub type Tool = Vec<Arg>;
+
+pub fn tool(args: &[&str]) -> Tool {
+    args.iter().map(|a| Arg::Str(a.to_string())).collect()
+}
+
+/// `tomllib.load(...).get("project", {}).get("name")`, None where it is falsy or unreadable.
+fn dist_name(pkg: &Path) -> Result<Option<Arg>, String> {
+    let Some(text) = python::read_utf8(&pkg.join("pyproject.toml"))? else {
+        return Ok(None);
+    };
+    let Ok(data) = toml::from_str::<toml::Table>(&text) else {
+        return Ok(None);
+    };
+    let name = match data.get("project") {
+        None => None,
+        Some(toml::Value::Table(p)) => p.get("name"),
+        Some(other) => {
+            return Err(format!(
+                "AttributeError: '{}' object has no attribute 'get'",
+                python::py_type(other)
+            ))
+        }
+    };
+    Ok(match name {
+        Some(v) if !python::falsy(v) => Some(match v {
+            toml::Value::String(s) => Arg::Str(s.clone()),
+            v => Arg::Bad(python::py_type(v)),
+        }),
+        _ => None,
+    })
+}
+
+/// The workspace member's `[project] name`, when `pkg` is a member rather than the root.
+fn workspace_dist(root: &Path, pkg: &Path) -> Result<Option<Arg>, String> {
+    if root.join("uv.lock").exists() && pkg != root {
+        dist_name(pkg)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Runners in the order to try them; the first one that spawns decides.
+///
+/// Only `--package` makes a workspace member's own sources importable, and a runner declared only
+/// in the root's dev group fails to spawn there, so the root-level runners follow it.
+pub fn pytest_commands(root: &Path, pkg: &Path, python: Option<&str>) -> Result<Vec<Tool>, String> {
+    let mut cmds = Vec::new();
+    if let Some(d) = workspace_dist(root, pkg)? {
+        let mut t = tool(&["uv", "run", "--no-sync", "--package"]);
+        t.extend([d, Arg::Str("pytest".into())]);
+        cmds.push(t);
+    }
+    if let Some(pinned) = python.map(|p| Path::new(p).with_file_name("pytest")) {
+        if pinned.exists() {
+            cmds.push(vec![Arg::Str(pinned.to_string_lossy().into_owned())]);
+        }
+    }
+    cmds.extend([
+        tool(&["pytest"]),
+        tool(&["uv", "run", "--no-sync", "pytest"]),
+    ]);
+    Ok(cmds)
+}
+
+/// `HELMSMAN_PYTEST_RUNNER` (pytest's arguments go last) in the same envs, tried before plain
+/// pytest; unset, none.
+pub fn project_runner_commands(root: &Path, pkg: &Path) -> Result<Vec<Tool>, String> {
+    let raw = std::env::var_os(RUNNER_ENV).unwrap_or_default();
+    let runner =
+        python::shlex_split(&raw.to_string_lossy()).map_err(|e| format!("ValueError: {e}"))?;
+    if runner.is_empty() {
+        return Ok(vec![]);
+    }
+    let runner: Vec<&str> = runner.iter().map(String::as_str).collect();
+    let mut cmds = Vec::new();
+    if let Some(d) = workspace_dist(root, pkg)? {
+        let mut t = tool(&["uv", "run", "--no-sync", "--package"]);
+        t.push(d);
+        t.extend(tool(&runner));
+        cmds.push(t);
+    }
+    if root.join("uv.lock").exists() {
+        cmds.push(tool(&[&["uv", "run", "--no-sync"][..], &runner].concat()));
+    }
+    cmds.push(tool(&runner));
+    Ok(cmds)
+}
+
+/// `_diff.run_cmd` on `tool`, raising where Popen would on a non-string argument.
+pub fn run_tool(tool: &Tool, cwd: &str, timeout: Duration) -> Result<(i32, String), String> {
+    let mut args = Vec::with_capacity(tool.len());
+    let mut bad = None;
+    for a in tool {
+        match a {
+            Arg::Str(s) => args.push(s.as_str()),
+            Arg::Bad(t) => bad = bad.or(Some(*t)),
+        }
+    }
+    if let Some(t) = bad {
+        if std::env::var_os("PATH").is_some() && which(args[0]).is_none() {
+            return Ok((-2, "MISSING".into()));
+        }
+        return Err(format!(
+            "TypeError: expected str, bytes or os.PathLike object, not {t}"
+        ));
+    }
+    Ok(diff::run_cmd(&args, cwd, timeout))
 }
 
 #[cfg(test)]

@@ -4,15 +4,13 @@ use std::time::{Duration, Instant};
 
 use regex::Regex;
 
-use super::f_import_closure::{falsy, py_type, read_utf8};
+use crate::env::{tool, Arg, RUNNER_ENV};
 use crate::{diff, env, python};
 
 const PER_PKG_S: f64 = 150.0;
 const MIN_RUN_S: f64 = 20.0;
 const MAX_PKGS: usize = 8;
 const SCOPE_ENV: &str = "HELMSMAN_PYTEST_SCOPE";
-const RUNNER_ENV: &str = "HELMSMAN_PYTEST_RUNNER";
-const SPAWN_FAILED: &str = "Failed to spawn";
 const SCOPE_NOTE: &str = "scope: only test files named after a changed module (test_<stem>.py / \
      <stem>_test.py) plus changed test files themselves, inside the owning \
      package - a package suite that would have failed elsewhere is not run here";
@@ -205,179 +203,6 @@ fn widen(tests: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
         .collect()
 }
 
-/// `shlex.split(s)`: POSIX quoting and escapes, no comments.
-fn shlex_split(s: &str) -> Result<Vec<String>, String> {
-    let ws = |c: char| matches!(c, ' ' | '\t' | '\r' | '\n');
-    let mut chars = s.chars();
-    let mut out = Vec::new();
-    loop {
-        let (mut token, mut quoted, mut state, mut escaped) = (String::new(), false, ' ', 'a');
-        let eof = loop {
-            let Some(c) = chars.next() else {
-                match state {
-                    '\'' | '"' => return Err("ValueError: No closing quotation".into()),
-                    '\\' => return Err("ValueError: No escaped character".into()),
-                    _ => break true,
-                }
-            };
-            match state {
-                '\'' | '"' => {
-                    quoted = true;
-                    if c == state {
-                        state = 'a';
-                    } else if c == '\\' && state == '"' {
-                        (escaped, state) = (state, '\\');
-                    } else {
-                        token.push(c);
-                    }
-                }
-                '\\' => {
-                    if matches!(escaped, '\'' | '"') && c != '\\' && c != escaped {
-                        token.push('\\');
-                    }
-                    token.push(c);
-                    state = escaped;
-                }
-                _ if ws(c) => {
-                    state = ' ';
-                    if !token.is_empty() || quoted {
-                        break false;
-                    }
-                }
-                _ if c == '\\' => (escaped, state) = ('a', '\\'),
-                _ if c == '\'' || c == '"' => state = c,
-                _ => {
-                    token.push(c);
-                    state = 'a';
-                }
-            }
-        };
-        if quoted || !token.is_empty() {
-            out.push(token);
-        }
-        if eof {
-            return Ok(out);
-        }
-    }
-}
-
-#[derive(Clone, PartialEq)]
-enum Arg {
-    Str(String),
-    /// A non-string `[project] name`, which Popen rejects with a TypeError.
-    Bad(&'static str),
-}
-
-type Tool = Vec<Arg>;
-
-fn tool(args: &[&str]) -> Tool {
-    args.iter().map(|a| Arg::Str(a.to_string())).collect()
-}
-
-enum Dist {
-    None,
-    Name(Arg),
-}
-
-fn dist_name(pkg: &Path) -> Result<Dist, String> {
-    let Some(text) = read_utf8(&pkg.join("pyproject.toml"))? else {
-        return Ok(Dist::None);
-    };
-    let Ok(data) = toml::from_str::<toml::Table>(&text) else {
-        return Ok(Dist::None);
-    };
-    let name = match data.get("project") {
-        None => None,
-        Some(toml::Value::Table(p)) => p.get("name"),
-        Some(other) => {
-            return Err(format!(
-                "AttributeError: '{}' object has no attribute 'get'",
-                py_type(other)
-            ))
-        }
-    };
-    Ok(match name {
-        Some(v) if !falsy(v) => Dist::Name(match v {
-            toml::Value::String(s) => Arg::Str(s.clone()),
-            v => Arg::Bad(py_type(v)),
-        }),
-        _ => Dist::None,
-    })
-}
-
-fn workspace_dist(root: &Path, pkg: &Path) -> Result<Dist, String> {
-    if root.join("uv.lock").exists() && pkg != root {
-        dist_name(pkg)
-    } else {
-        Ok(Dist::None)
-    }
-}
-
-fn pytest_commands(root: &Path, pkg: &Path, python: Option<&str>) -> Result<Vec<Tool>, String> {
-    let mut cmds = Vec::new();
-    if let Dist::Name(d) = workspace_dist(root, pkg)? {
-        let mut t = tool(&["uv", "run", "--no-sync", "--package"]);
-        t.extend([d, Arg::Str("pytest".into())]);
-        cmds.push(t);
-    }
-    if let Some(pinned) = python.map(|p| Path::new(p).with_file_name("pytest")) {
-        if pinned.exists() {
-            cmds.push(vec![Arg::Str(pinned.to_string_lossy().into_owned())]);
-        }
-    }
-    cmds.extend([
-        tool(&["pytest"]),
-        tool(&["uv", "run", "--no-sync", "pytest"]),
-    ]);
-    Ok(cmds)
-}
-
-fn project_runner_commands(root: &Path, pkg: &Path) -> Result<Vec<Tool>, String> {
-    let raw = std::env::var_os(RUNNER_ENV).unwrap_or_default();
-    let runner = shlex_split(&raw.to_string_lossy())?;
-    if runner.is_empty() {
-        return Ok(vec![]);
-    }
-    let runner: Vec<&str> = runner.iter().map(String::as_str).collect();
-    let mut cmds = Vec::new();
-    if let Dist::Name(d) = workspace_dist(root, pkg)? {
-        let mut t = tool(&["uv", "run", "--no-sync", "--package"]);
-        t.push(d);
-        t.extend(tool(&runner));
-        cmds.push(t);
-    }
-    if root.join("uv.lock").exists() {
-        cmds.push(tool(&[&["uv", "run", "--no-sync"][..], &runner].concat()));
-    }
-    cmds.push(tool(&runner));
-    Ok(cmds)
-}
-
-/// `_diff.run_cmd` on `tool`, raising where Popen would on a non-string argument.
-fn run_tool(tool: &Tool, cwd: &str, timeout: Duration) -> Result<(i32, String), String> {
-    let mut args = Vec::with_capacity(tool.len());
-    let mut bad = None;
-    for a in tool {
-        match a {
-            Arg::Str(s) => args.push(s.as_str()),
-            Arg::Bad(t) => bad = bad.or(Some(*t)),
-        }
-    }
-    if let Some(t) = bad {
-        if std::env::var_os("PATH").is_some() && env::which(args[0]).is_none() {
-            return Ok((-2, "MISSING".into()));
-        }
-        return Err(format!(
-            "TypeError: expected str, bytes or os.PathLike object, not {t}"
-        ));
-    }
-    Ok(diff::run_cmd(&args, cwd, timeout))
-}
-
-fn runner_unavailable(code: i32, out: &str) -> bool {
-    code == -2 || code == -3 || (code == 2 && out.contains(SPAWN_FAILED))
-}
-
 fn skipped(label: &str, kind: &str, detail: &str, tail: Option<&str>) -> (String, String) {
     let block = tail
         .filter(|t| !t.is_empty())
@@ -523,9 +348,9 @@ fn report(worktree: &str, base: &str, budget: f64) -> Result<String, String> {
                 }
             })
             .collect();
-        let runners = project_runner_commands(&root, pkg)?;
+        let runners = env::project_runner_commands(&root, pkg)?;
         let mut tools = runners.clone();
-        tools.extend(pytest_commands(&root, pkg, penv.python.as_deref())?);
+        tools.extend(env::pytest_commands(&root, pkg, penv.python.as_deref())?);
         let mut decided = false;
         for t in &tools {
             let left = PER_PKG_S.min(remaining());
@@ -537,8 +362,8 @@ fn report(worktree: &str, base: &str, budget: f64) -> Result<String, String> {
             let mut argv = t.clone();
             argv.extend(rel.iter().map(|r| Arg::Str(r.clone())));
             argv.extend(tool(&["-q", "-x"]));
-            let (code, out) = run_tool(&argv, worktree, Duration::from_secs_f64(left))?;
-            if runner_unavailable(code, &out) {
+            let (code, out) = env::run_tool(&argv, worktree, Duration::from_secs_f64(left))?;
+            if env::runner_unavailable(code, &out) {
                 last = out;
                 continue;
             }
@@ -608,28 +433,6 @@ fn report(worktree: &str, base: &str, budget: f64) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shlex_split_matches_posix_shlex() {
-        let ok = |s: &str| shlex_split(s).unwrap();
-        assert_eq!(
-            ok("fastrun --workers 4 --"),
-            ["fastrun", "--workers", "4", "--"]
-        );
-        assert_eq!(
-            ok("  a'b c'\"d\\\"e\\x\" '' \\ f "),
-            ["ab cd\"e\\x", "", " f"]
-        );
-        assert!(ok(" \t\n").is_empty());
-        assert_eq!(
-            shlex_split("a 'b").unwrap_err(),
-            "ValueError: No closing quotation"
-        );
-        assert_eq!(
-            shlex_split("a \\").unwrap_err(),
-            "ValueError: No escaped character"
-        );
-    }
 
     #[test]
     fn glob_regex_matches_like_fnmatch() {

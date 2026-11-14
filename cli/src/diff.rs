@@ -123,13 +123,18 @@ mod group {
         }
     }
 
-    extern "C" fn on_sigterm(_: libc::c_int) {
+    /// Async-signal-safe: only atomics and kill(2).
+    pub fn kill_all() {
         for g in &GROUPS {
             let pgid = g.load(Ordering::SeqCst);
             if pgid > 0 {
                 kill(pgid);
             }
         }
+    }
+
+    extern "C" fn on_sigterm(_: libc::c_int) {
+        kill_all();
         unsafe { libc::_exit(128 + libc::SIGTERM) };
     }
 
@@ -149,6 +154,12 @@ mod group {
             libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
         });
     }
+}
+
+/// Kill every tool group `run` has running; safe to call from a signal handler.
+#[cfg(unix)]
+pub fn kill_running_tools() {
+    group::kill_all();
 }
 
 #[cfg(unix)]

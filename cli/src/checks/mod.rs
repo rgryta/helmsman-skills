@@ -8,6 +8,7 @@ mod d_comment_density;
 mod e_dead_code;
 mod f_import_closure;
 mod g_semgrep;
+mod h_mutation;
 mod i_neighborhood;
 mod j_siblings;
 mod k_claims;
@@ -22,6 +23,7 @@ pub const REGISTRY: &[(&str, Check)] = &[
     ("e_dead_code", e_dead_code::run),
     ("f_import_closure", f_import_closure::run),
     ("g_semgrep", g_semgrep::run),
+    ("h_mutation", h_mutation::run),
     ("i_neighborhood", i_neighborhood::run),
     ("j_siblings", j_siblings::run),
     ("k_claims", k_claims::run),
