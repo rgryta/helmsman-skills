@@ -61,6 +61,20 @@ uv run pytest
 
 The dev dependency group (pytest, pyyaml, semgrep) is installed by `uv run`.
 
+## Rust CLI
+
+`helmsman` is a Rust binary (`cli/`) that runs some Phase 0 checks faster than their
+Python versions; `helmsman checks` lists the ones it ports, and every other check runs in
+Python. Each `v<version>` tag publishes it on GitHub Releases for Linux (static musl),
+macOS and Windows, each on x86_64 and aarch64, with a `SHA256SUMS` file.
+
+When `HELMSMAN_CLI` is unset and `~/.helmsman/bin/<plugin-version>/` holds no binary,
+Phase 0 runs `fetch_cli.py` once: it downloads the release for this OS/arch, checks it
+against `SHA256SUMS` and caches it there. Any failure (offline, unsupported platform,
+checksum mismatch) leaves nothing installed and Phase 0 runs every check in Python. Set
+`HELMSMAN_CLI` to a binary's path to use that binary, or to `off` to skip the binary and
+the download.
+
 ## Environment variables
 
 | Variable | Default | Effect |
