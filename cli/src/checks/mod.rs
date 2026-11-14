@@ -5,6 +5,7 @@ mod a_ruff;
 mod b_pyright;
 mod c_pytest;
 mod d_comment_density;
+mod e_dead_code;
 mod f_import_closure;
 mod i_neighborhood;
 mod j_siblings;
@@ -17,6 +18,7 @@ pub const REGISTRY: &[(&str, Check)] = &[
     ("b_pyright", b_pyright::run),
     ("c_pytest", c_pytest::run),
     ("d_comment_density", d_comment_density::run),
+    ("e_dead_code", e_dead_code::run),
     ("f_import_closure", f_import_closure::run),
     ("i_neighborhood", i_neighborhood::run),
     ("j_siblings", j_siblings::run),
