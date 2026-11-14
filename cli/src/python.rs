@@ -129,7 +129,7 @@ pub fn comment_lines(text: &str) -> Option<BTreeSet<usize>> {
     }
     if depth > 0
         || open_interpolations > 0
-        || !indentation_consistent(text.as_bytes(), &logical_starts)
+        || indentation_fault(text.as_bytes(), &logical_starts).is_some()
     {
         return None;
     }
@@ -180,9 +180,17 @@ fn malformed_number(lit: &str, rest: &str) -> bool {
     last != b'j' && last != b'J' && exponent_without_digits
 }
 
+/// Which error CPython's tokenizer raises on bad indentation.
+#[derive(Debug, PartialEq)]
+pub enum IndentFault {
+    IndentationError,
+    TabError,
+}
+
 /// CPython's indentation bookkeeping (tab stops of 8, cross-checked against tab stops of 1), run
-/// at the start of every logical line; whitespace- and comment-only lines are skipped.
-fn indentation_consistent(src: &[u8], logical_starts: &[usize]) -> bool {
+/// at the start of every logical line; whitespace- and comment-only lines are skipped. Returns the
+/// first fault with the offset of the line's first token.
+pub fn indentation_fault(src: &[u8], logical_starts: &[usize]) -> Option<(usize, IndentFault)> {
     const MAX_INDENT: usize = 100;
     let mut stack = vec![(0usize, 0usize)];
     for &start in logical_starts {
@@ -216,16 +224,23 @@ fn indentation_consistent(src: &[u8], logical_starts: &[usize]) -> bool {
                     }
                     let (top, alt_top) = *stack.last().unwrap();
                     if col > top {
-                        if stack.len() >= MAX_INDENT || alt <= alt_top {
-                            return false;
+                        if stack.len() >= MAX_INDENT {
+                            return Some((pos, IndentFault::IndentationError));
+                        }
+                        if alt <= alt_top {
+                            return Some((pos, IndentFault::TabError));
                         }
                         stack.push((col, alt));
                     } else {
                         while stack.len() > 1 && col < stack.last().unwrap().0 {
                             stack.pop();
                         }
-                        if *stack.last().unwrap() != (col, alt) {
-                            return false;
+                        let (top, alt_top) = *stack.last().unwrap();
+                        if col != top {
+                            return Some((pos, IndentFault::IndentationError));
+                        }
+                        if alt != alt_top {
+                            return Some((pos, IndentFault::TabError));
                         }
                     }
                     break;
@@ -233,7 +248,7 @@ fn indentation_consistent(src: &[u8], logical_starts: &[usize]) -> bool {
             }
         }
     }
-    true
+    None
 }
 
 #[cfg(test)]
