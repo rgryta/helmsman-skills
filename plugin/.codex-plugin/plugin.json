@@ -1,6 +1,6 @@
 {
   "name": "helmsman-skills",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "PR review, review-fold, CI triage, PR comment, branch-pruning and transcript-context skills for Codex and Claude Code.",
   "author": { "name": "Radosław Gryta", "url": "https://github.com/rgryta" },
   "homepage": "https://github.com/rgryta/helmsman-skills",
