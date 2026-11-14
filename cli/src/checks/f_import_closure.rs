@@ -308,7 +308,7 @@ fn req_name(req: &str) -> Option<&str> {
 }
 
 /// Python's type name for a value `tomllib` produced.
-fn py_type(v: &toml::Value) -> &'static str {
+pub(crate) fn py_type(v: &toml::Value) -> &'static str {
     match v {
         toml::Value::String(_) => "str",
         toml::Value::Integer(_) => "int",
@@ -324,7 +324,7 @@ fn py_type(v: &toml::Value) -> &'static str {
     }
 }
 
-fn falsy(v: &toml::Value) -> bool {
+pub(crate) fn falsy(v: &toml::Value) -> bool {
     match v {
         toml::Value::String(s) => s.is_empty(),
         toml::Value::Integer(i) => *i == 0,
@@ -388,7 +388,7 @@ fn names_dependencies(v: Option<&toml::Value>, minor: u32) -> Result<bool, Strin
 }
 
 /// `Path.read_text()` as UTF-8, failing with the UnicodeDecodeError text CPython raises.
-fn read_utf8(path: &Path) -> Result<Option<String>, String> {
+pub(crate) fn read_utf8(path: &Path) -> Result<Option<String>, String> {
     let Ok(bytes) = std::fs::read(path) else {
         return Ok(None);
     };

@@ -3,6 +3,7 @@ pub type Check = fn(worktree: &str, base: &str) -> i32;
 
 mod a_ruff;
 mod b_pyright;
+mod c_pytest;
 mod d_comment_density;
 mod f_import_closure;
 mod i_neighborhood;
@@ -14,6 +15,7 @@ mod m_bounds;
 pub const REGISTRY: &[(&str, Check)] = &[
     ("a_ruff", a_ruff::run),
     ("b_pyright", b_pyright::run),
+    ("c_pytest", c_pytest::run),
     ("d_comment_density", d_comment_density::run),
     ("f_import_closure", f_import_closure::run),
     ("i_neighborhood", i_neighborhood::run),
